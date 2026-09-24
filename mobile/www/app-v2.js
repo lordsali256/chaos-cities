@@ -25,9 +25,9 @@ const realityStage = weirdness => Math.max(0, Math.min(11, Math.floor((Number(we
 const state = {
   server: localStorage.getItem('chaos_server') || location.origin,
   key: localStorage.getItem('chaos_key') || '',
-  me: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], rivalHeroes: [], nextOffersAt: 0,
-  eventTab: 'self', logTab: 'all', traitsOpen: false, traitSearch: '', traitCategory: 'All', traitSort: 'high',
-  setupMode: 'new', page: 'city', busy: false, selectedTech: 'city_charter',
+  me: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
+  eventTab: 'self', logTab: 'all', traitsOpen: false, traitSearch: '', traitCategory: 'All', traitSort: 'high', groupTraits: localStorage.getItem('chaos_group_traits') !== 'false',
+  setupMode: 'new', page: 'city', busy: false, selectedTech: 'city_charter', techBranch: 'Commerce',
   googleClientId: '',
 };
 
@@ -92,8 +92,7 @@ function setup() {
       <h1>Build a city.<br>Break reality.</h1>
       <p>Each player has one city, hourly Chaos Tokens, and a local AI that keeps inventing trouble even while you are away.</p>
       <label class="field">GAME SERVER ADDRESS<input class="input" id="server" type="url" placeholder="https://your-game.example.com" value="${esc(defaultUrl)}" required></label>
-      <div id="google-login" class="google-login" hidden><p>One tap to enter your city with your Google account.</p><div id="google-invite-wrap"></div><div id="google-button"></div></div>
-      <details id="key-login"><summary>Use a city key instead</summary>
+      <details id="key-login" open><summary>Enter with a city key</summary>
       <div class="setup-toggle"><button class="${state.setupMode === 'new' ? 'primary' : 'secondary'}" onclick="setSetupMode('new')">New city</button><button class="${state.setupMode === 'recover' ? 'primary' : 'secondary'}" onclick="setSetupMode('recover')">Return to mine</button></div>
       <form class="form" id="setup-form">
         ${state.setupMode === 'new'
@@ -104,9 +103,8 @@ function setup() {
       <div class="notice">Save your city key. It is your way back on another phone. Internet servers must use HTTPS.</div>
     </div></div>`;
   byId('setup-form').onsubmit = submitSetup;
-  byId('server').onchange = () => { state.server = byId('server').value.trim().replace(/\/$/, ''); prepareGoogleLogin(); };
-  byId('key-login').open = !state.googleClientId;
-  prepareGoogleLogin();
+  byId('server').onchange = () => { state.server = byId('server').value.trim().replace(/\/$/, ''); };
+  byId('key-login').open = true;
 }
 
 async function prepareGoogleLogin() {
@@ -188,6 +186,8 @@ async function refresh(quiet = false) {
   try {
     const [mine, world, catalog, diplomacy] = await Promise.all([api('/api/me'), api('/api/cities'), api('/api/catalog'), api('/api/trades')]);
     state.me = mine.city;
+    state.research = mine.research || null;
+    state.dailyTagline = mine.daily_tagline || '';
     state.phoneServerUrl = mine.phone_server_url || '';
     state.feed = mine.feed;
     state.heroes = mine.heroes || [];
@@ -268,13 +268,29 @@ function feedItems() {
   if (!filtered.length) return '<p class="empty">No entries here yet. The city AI will have something to say soon.</p>';
   return filtered.map(item => `<div class="feed-item"><div class="feed-icon">${item.kind === 'hero' ? '🧑‍🚀' : item.icon}</div><div class="feed-content"><div class="feed-title">${esc(item.event)} ${item.kind === 'battle' ? (item.success ? '· attacker won' : '· defender won') : item.success ? '' : '· misfired'} <span class="chip">${item.kind === 'ambient' ? 'CITY AI' : item.kind === 'hero' ? 'NEW CITIZEN' : item.kind === 'errand' ? 'PAST CITY JOB' : item.kind === 'building' ? 'CONSTRUCTION' : item.kind === 'battle' ? 'TRAIT BATTLE' : item.kind === 'trade' ? 'CITY TRADE' : 'PLAYER EVENT'}</span></div><div class="feed-story">${esc(item.story)}</div><div class="muted" style="margin-top:6px">${esc(item.actor)} → ${esc(item.target)} · ${new Date(item.created_at * 1000).toLocaleString()}</div>${item.kind === 'hero' ? '' : `<details class="change-details"><summary>See exact changes</summary>${changeRows(item.changes)}</details>`}${item.kind === 'battle' ? battleSamples(item.changes?.sampled_traits, item.changes?.win_chance, item.changes) : ''}</div></div>`).join('');
 }
+function featuredEvent() {
+  const rewards = state.feed.map(item => {
+    const changes = item.changes || {};
+    const sections = ['stats', 'traits', 'wallet'];
+    if (item.kind === 'battle') sections.push(item.success ? 'attacker_traits' : 'defender_traits');
+    const gains = sections.flatMap(section => Object.entries(changes[section] || {}).filter(([, value]) => Number(value?.delta) > 0).map(([name,value]) => ({name, amount:Number(value.delta)})));
+    if (changes.citizens && Object.values(changes.citizens).some(value => value.after === state.me.name)) gains.push({name:'special citizen',amount:10});
+    const score = gains.reduce((sum, gain) => sum + gain.amount * (['shards','cores','special citizen'].includes(gain.name) ? 10 : 1), 0);
+    return {item,gains,score};
+  }).filter(entry => entry.score > 0).sort((a,b) => b.score-a.score)[0];
+  if (!rewards) return '';
+  const {item,gains} = rewards;
+  return `<div class="surface featured-event"><span class="eyebrow">🏆 BEST RECENT REWARD</span><h2>${esc(item.event)}</h2><p>${esc(item.story)}</p><div class="reward-chips">${gains.sort((a,b) => b.amount-a.amount).slice(0,5).map(gain => `<span>+${gain.amount} ${esc(gain.name.replaceAll('_',' '))}</span>`).join('')}</div></div>`;
+}
 function traitRows() {
   const search = state.traitSearch.toLowerCase();
   const categories = state.me.trait_categories || {};
   const rows = Object.entries(state.me.traits).filter(([name]) => name.toLowerCase().includes(search) && (state.traitCategory === 'All' || categories[name] === state.traitCategory));
   rows.sort((a,b) => state.traitSort === 'az' ? a[0].localeCompare(b[0]) : state.traitSort === 'za' ? b[0].localeCompare(a[0]) : state.traitSort === 'low' ? a[1]-b[1] || a[0].localeCompare(b[0]) : b[1]-a[1] || a[0].localeCompare(b[0]));
+  const draw = items => items.map(([name,value]) => `<div class="trait"><span>${esc(name)}</span><div class="bar"><i style="width:${value}%"></i></div><b>${value}</b></div>`).join('');
+  if (!state.groupTraits) return rows.length ? `<div class="traits flat-traits">${draw(rows)}</div>` : '<p class="empty">No matching traits.</p>';
   const groups = state.traitCategory === 'All' ? [...new Set(Object.values(categories))] : [state.traitCategory];
-  return groups.map(group => { const items = rows.filter(([name]) => categories[name] === group); return items.length ? `<details class="trait-group" ${search || state.traitCategory !== 'All' ? 'open' : ''}><summary>${esc(group)} <small>${items.length} traits</small></summary><div class="traits">${items.map(([name,value]) => `<div class="trait"><span>${esc(name)}</span><div class="bar"><i style="width:${value}%"></i></div><b>${value}</b></div>`).join('')}</div></details>` : ''; }).join('') || '<p class="empty">No matching traits.</p>';
+  return groups.map(group => { const items = rows.filter(([name]) => categories[name] === group); return items.length ? `<details class="trait-group" ${search || state.traitCategory !== 'All' ? 'open' : ''}><summary>${esc(group)} <small>${items.length} traits</small></summary><div class="traits">${draw(items)}</div></details>` : ''; }).join('') || '<p class="empty">No matching traits.</p>';
 }
 
 function heroCards() {
@@ -288,17 +304,22 @@ function shopCards() {
   return state.shop.map(item => `<div class="card"><div class="event-icon">${item.icon}</div><div class="card-main"><h3>${esc(item.name)} <small>Level ${item.level}/${item.max_level}</small></h3><p>${esc(item.effect)}</p><div class="meta"><span class="cost">💵 ${item.cost} Cash · Tech ${item.tech}</span><button class="cast" ${!item.unlocked || item.level >= item.max_level || state.me.cash < item.cost ? 'disabled' : ''} onclick="buyUpgrade('${item.id}')">${item.level >= item.max_level ? 'Complete' : item.unlocked ? 'Upgrade →' : 'Locked'}</button></div></div></div>`).join('');
 }
 
+function researchPercent() {
+  if (!state.research) return 0;
+  return Math.max(0, Math.min(100, 100 * (Date.now()/1000 - state.research.started_at) / (state.research.ready_at - state.research.started_at)));
+}
 function techTreeView() {
   const known = new Set(state.me.tech_nodes);
   const lookup = Object.fromEntries(state.techTree.map(node => [node.id,node]));
-  const edges = state.techTree.flatMap(node => node.requires.map(id => `<line x1="${lookup[id].x}" y1="${lookup[id].y}" x2="${node.x}" y2="${node.y}" class="${known.has(id) && known.has(node.id) ? 'lit' : ''}"/>`)).join('');
-  const nodes = state.techTree.map(node => {
-    const owned = known.has(node.id), ready = node.requires.every(id => known.has(id)) && state.me.tech >= node.tech && state.me.cash >= node.cost;
-    const status = owned ? 'Researched' : ready ? 'Ready to research' : 'Locked';
+  const visible = state.techTree.filter(node => node.branch === state.techBranch || node.id === 'city_charter').sort((a,b) => a.y-b.y || a.x-b.x);
+  const nodes = visible.map(node => {
+    const owned = known.has(node.id), researching = state.research?.node_id === node.id;
+    const ready = !state.research && node.requires.every(id => known.has(id)) && state.me.tech >= node.tech && state.me.cash >= node.cost;
+    const status = researching ? 'Researching' : owned ? 'Researched' : ready ? 'Ready to research' : 'Locked';
     const requirements = node.requires.map(id => lookup[id]?.name || id).join(', ') || 'None';
-    return `<button class="tech-dot ${esc(node.branch.toLowerCase())} ${owned ? 'owned' : ready ? 'ready' : 'locked'} ${node.id === 'city_charter' ? 'root-dot' : ''}" style="left:${node.x}px;top:${node.y}px" aria-label="${esc(node.name)}: ${esc(node.effect)}. ${status}" onclick="showTechNode('${node.id}')"><span class="dot-core"></span><span class="tech-tooltip"><b>${esc(node.name)}</b><small>${esc(node.branch)} · Tech ${node.tech} · 💵 ${node.cost} Cash</small><span>${esc(node.effect)}</span><small>Needs: ${esc(requirements)}</small><em>${status}</em></span></button>`;
+    return `<div class="tech-lane-row"><button class="tech-dot ${esc(node.branch.toLowerCase())} ${owned ? 'owned' : ready ? 'ready' : 'locked'} ${researching ? 'researching' : ''}" aria-label="${esc(node.name)}: ${esc(node.effect)}. ${status}" onclick="showTechNode('${node.id}')"><span class="dot-core"></span><span class="tech-tooltip"><b>${esc(node.name)}</b><small>Tech ${node.tech} · 💵 ${node.cost} Cash</small><span>${esc(node.effect)}</span><small>Needs: ${esc(requirements)}</small><em>${status}${researching ? ` · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span>` : ''}</em>${researching ? `<span class="mini-progress"><i data-research-progress style="width:${researchPercent()}%"></i></span>` : ''}</span></button><div class="tech-lane-label"><strong>${esc(node.name)}</strong><small>${esc(node.effect)}</small><span>${status}${researching ? ` · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span>` : ''}</span></div></div>`;
   }).join('');
-  return `<div class="tree-legend"><span>● Researched</span><span>◉ Available</span><span>○ Locked</span><span>${known.size} / ${state.techTree.length} nodes</span></div><div class="tree-jumps">${['Commerce','Science','Food','Culture','Construction'].map(branch => `<button class="secondary" onclick="jumpTech('${branch}')">${branch}</button>`).join('')}</div><p class="progress-note">Drag the map sideways or scroll down. Tap a dot to inspect it below the map.</p><div class="tree-scroll" id="tree-scroll"><div class="tree-canvas"><svg viewBox="0 0 1200 1540" aria-hidden="true">${edges}</svg>${nodes}</div></div><div class="surface tech-inspector" id="tech-inspector"></div>`;
+  return `<div class="tree-legend"><span>● Researched</span><span>◉ Available</span><span>○ Locked</span><span>${known.size} / ${state.techTree.length} nodes</span></div><div class="tree-jumps">${['Commerce','Science','Food','Culture','Construction'].map(branch => `<button class="secondary ${state.techBranch === branch ? 'selected' : ''}" onclick="jumpTech('${branch}')">${branch}</button>`).join('')}</div><p class="progress-note">Pick a branch, then tap a dot for its requirements and timer. Completed dots unlock connected research.</p>${state.research ? `<div class="surface research-active"><b>🔬 Researching ${esc(lookup[state.research.node_id]?.name || state.research.node_id)}</b><span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span><div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div></div>` : ''}<div class="tech-lane">${nodes}</div><div class="surface tech-inspector" id="tech-inspector"></div>`;
 }
 
 function buildingPerk(item) {
@@ -366,7 +387,8 @@ function render() {
     <nav class="main-nav" aria-label="Game pages">${[['city','🏙️ City'],['chaos','✨ Chaos'],['citizens','🧑‍🚀 Citizens'],['build','🏗️ Buildings'],['research','🧬 Research'],['battles','⚔️ Battles'],['trades','🤝 Trades'],['log','📜 Log'],['traits','🗂️ Traits'],['glossary','📖 Help']].map(([id,label]) => `<button class="tab ${state.page === id ? 'active' : ''}" onclick="setPage('${id}')">${label}</button>`).join('')}</nav>
     <div class="quick-stats" aria-label="City resources">${[['👥','Citizens',city.population],['💰','Wealth',city.wealth],['🥫','Food',city.food],['😊','Morale',city.morale],['🛸','Tech',city.tech]].map(([icon,label,value]) => `<div title="${label}"><span>${icon} ${label}</span><strong>${value}</strong></div>`).join('')}</div>
     ${state.page === 'city' ? `
-    <section class="hero"><div class="city-scene" aria-hidden="true"><div class="scene-sun"></div><div class="scene-cloud"></div><div class="scene-portal"></div><div class="scene-ground"></div><div class="scene-building one"></div><div class="scene-building two"></div><div class="scene-building three"></div><div class="scene-eye"></div></div><span class="eyebrow">${esc(city.owner_name)}'S GLORIOUS DISASTER</span><h1>${esc(city.name)}</h1><p>A living, opinionated city with 320 distinct personality traits. Its reality gets stranger over time.</p><button class="secondary rename-button" onclick="renameCity()">Rename city</button><span class="reality-label">${esc(pathName)} · Skyline ${stage + 1}/12 · ${esc(REALITY_STAGES[stage])}</span></section>
+    <section class="hero"><div class="city-scene" aria-hidden="true"><div class="scene-sun"></div><div class="scene-cloud"></div><div class="scene-portal"></div><div class="scene-ground"></div><div class="scene-building one"></div><div class="scene-building two"></div><div class="scene-building three"></div><div class="scene-eye"></div></div><span class="eyebrow">${esc(city.owner_name)}'S GLORIOUS DISASTER</span><h1>${esc(city.name)}</h1><p>${esc(state.dailyTagline)}</p><button class="secondary rename-button" onclick="renameCity()">Rename city</button><span class="reality-label">${esc(pathName)} · Skyline ${stage + 1}/12 · ${esc(REALITY_STAGES[stage])}</span></section>
+    ${featuredEvent()}
     <div class="currency-grid">
       <div class="wallet"><span>✦ CHAOS TOKENS</span><strong>${city.tokens}<small> / ${city.max_tokens}</small></strong><p>+1 each hour · next in <span data-countdown="${city.next_tokens_at}">${clock(city.next_tokens_at)}</span></p></div>
       <div class="wallet cash"><span>💵 CASH</span><strong>${city.cash.toFixed(2)}</strong><p>+${city.cash_per_hour.toFixed(3)} each hour from base income and Wealth</p></div>
@@ -419,8 +441,8 @@ function render() {
     <div class="surface">${feedItems()}</div>
     ` : ''}
     ${state.page === 'traits' ? `
-    <div class="section-head"><div><h2>Personality atlas</h2><p>320 unique traits in ten collapsible groups. Sort or search them.</p></div></div>
-    <div class="surface"><div class="trait-controls"><input class="input" placeholder="Search traits…" id="trait-search" value="${esc(state.traitSearch)}"><select id="trait-category" aria-label="Trait category"><option>All</option>${[...new Set(Object.values(city.trait_categories))].map(group => `<option ${state.traitCategory === group ? 'selected' : ''}>${esc(group)}</option>`).join('')}</select><select id="trait-sort" aria-label="Sort traits"><option value="high" ${state.traitSort === 'high' ? 'selected' : ''}>Highest first</option><option value="low" ${state.traitSort === 'low' ? 'selected' : ''}>Lowest first</option><option value="az" ${state.traitSort === 'az' ? 'selected' : ''}>Name A–Z</option><option value="za" ${state.traitSort === 'za' ? 'selected' : ''}>Name Z–A</option></select></div><div id="trait-list">${traitRows()}</div></div>
+    <div class="section-head"><div><h2>Personality atlas</h2><p>320 unique traits. Group them or show one sortable list.</p></div></div>
+    <div class="surface"><div class="trait-controls"><input class="input" placeholder="Search traits…" id="trait-search" value="${esc(state.traitSearch)}"><select id="trait-category" aria-label="Trait category"><option>All</option>${[...new Set(Object.values(city.trait_categories))].map(group => `<option ${state.traitCategory === group ? 'selected' : ''}>${esc(group)}</option>`).join('')}</select><select id="trait-sort" aria-label="Sort traits"><option value="high" ${state.traitSort === 'high' ? 'selected' : ''}>Highest first</option><option value="low" ${state.traitSort === 'low' ? 'selected' : ''}>Lowest first</option><option value="az" ${state.traitSort === 'az' ? 'selected' : ''}>Name A–Z</option><option value="za" ${state.traitSort === 'za' ? 'selected' : ''}>Name Z–A</option></select><label class="group-toggle"><input type="checkbox" id="group-traits" ${state.groupTraits ? 'checked' : ''}> Group traits</label></div><div id="trait-list">${traitRows()}</div></div>
     ` : ''}
     ${state.page === 'glossary' ? glossaryView() : ''}
     <footer class="footer"><span>Local AI chooses city incidents and speaks as the city. The server keeps effects bounded.</span><a class="link" href="${esc(state.server.replace(/\/$/, ''))}/board" target="_blank" rel="noopener">Project board</a><button class="link" onclick="showAccount()">My city key & server</button></footer>
@@ -429,6 +451,7 @@ function render() {
     byId('trait-search').oninput = event => { state.traitSearch = event.target.value; byId('trait-list').innerHTML = traitRows(); };
     byId('trait-category').onchange = event => { state.traitCategory = event.target.value; byId('trait-list').innerHTML = traitRows(); };
     byId('trait-sort').onchange = event => { state.traitSort = event.target.value; byId('trait-list').innerHTML = traitRows(); };
+    byId('group-traits').onchange = event => { state.groupTraits = event.target.checked; localStorage.setItem('chaos_group_traits', String(state.groupTraits)); byId('trait-list').innerHTML = traitRows(); };
   }
   if (state.page === 'research') showTechNode(state.selectedTech);
 }
@@ -442,11 +465,8 @@ window.renameCity = () => {
   api('/api/city/rename', {method:'POST', body:JSON.stringify({name:name.trim()})}).then(() => refresh(true)).then(() => toast('Your city has a new name')).catch(error => toast(error.message));
 };
 window.jumpTech = branch => {
-  const dot = state.techTree.find(node => node.branch === branch && !state.me.tech_nodes.includes(node.id)) || state.techTree.find(node => node.branch === branch);
-  const map = byId('tree-scroll');
-  if (!dot || !map) return;
-  map.scrollTo({left:Math.max(0,dot.x-map.clientWidth/2), top:Math.max(0,dot.y-100), behavior:'smooth'});
-  showTechNode(dot.id);
+  state.techBranch = branch;
+  render();
 };
 window.chooseSpecialization = id => {
   const option = state.specializations.find(item => item.id === id);
@@ -484,10 +504,11 @@ window.showTechNode = id => {
   const owned = new Set(state.me.tech_nodes);
   const needs = node.requires.map(item => names[item] || item);
   const prerequisites = node.requires.every(item => owned.has(item));
-  const available = !owned.has(id) && prerequisites && state.me.tech >= node.tech && state.me.cash >= node.cost;
+  const researching = state.research?.node_id === id;
+  const available = !state.research && !owned.has(id) && prerequisites && state.me.tech >= node.tech && state.me.cash >= node.cost;
   const panel = byId('tech-inspector');
   if (!panel) return;
-  panel.innerHTML = `<span class="eyebrow">${esc(node.branch.toUpperCase())} RESEARCH</span><h3>${esc(node.name)}</h3><p>${esc(node.effect)}</p><small>Requires ${needs.length ? esc(needs.join(', ')) : 'no earlier research'} · Tech ${node.tech} · 💵 ${node.cost} Cash</small><p>${owned.has(id) ? 'Already researched' : available ? 'Ready to research' : !prerequisites ? 'Research the connected dots first.' : state.me.tech < node.tech ? `Needs ${node.tech} Tech; you have ${state.me.tech}.` : `Needs ${node.cost} Cash; you have ${state.me.cash.toFixed(2)}.`}</p><button class="primary" ${available ? '' : 'disabled'} onclick="researchNode('${id}')">Research this dot</button>`;
+  panel.innerHTML = `<span class="eyebrow">${esc(node.branch.toUpperCase())} RESEARCH</span><h3>${esc(node.name)}</h3><p>${esc(node.effect)}</p><small>Requires ${needs.length ? esc(needs.join(', ')) : 'no earlier research'} · Tech ${node.tech} · 💵 ${node.cost} Cash</small><p>${researching ? `Researching · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span> left` : owned.has(id) ? 'Already researched' : state.research ? 'Finish your current research first.' : available ? 'Ready to research' : !prerequisites ? 'Research the connected dots first.' : state.me.tech < node.tech ? `Needs ${node.tech} Tech; you have ${state.me.tech}.` : `Needs ${node.cost} Cash; you have ${state.me.cash.toFixed(2)}.`}</p>${researching ? `<div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div>` : ''}<button class="primary" ${available ? '' : 'disabled'} onclick="researchNode('${id}')">Start research</button>`;
 };
 
 window.buyUpgrade = id => {
@@ -573,10 +594,41 @@ window.startBattle = () => {
   byId('cancel-battle').onclick = () => overlay.remove();
   byId('confirm-battle').onclick = async () => {
     state.busy = true;
+    const rivalName = targets.find(item => item.id === byId('battle-target').value)?.name || 'the rival city';
     byId('confirm-battle').disabled = true;
-    byId('confirm-battle').textContent = 'Battling…';
+    byId('confirm-battle').textContent = 'Preparing the arena…';
     try {
       const result = await api('/api/battles', {method:'POST', body:JSON.stringify({target_city_id:byId('battle-target').value})});
+      const names = (result.sampled_traits || []).map(item => item.name);
+      const fallbackBeats = [
+        `${state.me.name} and ${rivalName} arrive with deeply questionable flags.`,
+        `The judges demand a sudden audit of ${names[0] || 'civic enthusiasm'}.`,
+        `A marching band weaponizes ${names[3] || 'confetti'}; both mayors deny hiring it.`,
+        `${names[7] || 'The town council'} becomes a competitive sport for six bewildering minutes.`,
+        `Someone files a formal complaint against ${names[11] || 'gravity'}. The complaint wins a trophy.`,
+        `The defenders deploy emergency ${names[15] || 'snacks'} with alarming confidence.`,
+        `The referee consults a duck. The duck asks for a recount.`,
+        `Both cities demand that the final score be spelled correctly.`
+      ];
+      const beats = Array.isArray(result.beats) && result.beats.length >= 3 ? [`${state.me.name} challenges ${rivalName}. The crowd finds a safe distance.`, ...result.beats, 'The judges are counting the last ridiculous points.'] : fallbackBeats;
+      const duration = 42000;
+      const began = Date.now();
+      let shown = 0;
+      overlay.innerHTML = `<div class="modal battle-show"><span class="eyebrow">⚔️ BATTLE IN PROGRESS</span><h2>${esc(state.me.name)} vs ${esc(rivalName)}</h2><div class="battle-arena" aria-hidden="true"><span class="battle-fighter left">🏰</span><span class="battle-sparks">💥</span><span class="battle-fighter right">🏰</span></div><div class="progress"><i id="battle-progress" style="width:0%"></i></div><div class="battle-percent" id="battle-percent">0% · about 42 seconds remaining</div><div class="battle-ticker" id="battle-ticker" aria-live="polite"></div></div>`;
+      await new Promise(resolve => {
+        const timer = setInterval(() => {
+          const fraction = Math.min(1, (Date.now()-began)/duration);
+          const percent = Math.floor(fraction*100);
+          const bar = byId('battle-progress');
+          if (bar) bar.style.width = percent+'%';
+          const label = byId('battle-percent');
+          if (label) label.textContent = `${percent}% · ${Math.max(0,Math.ceil((duration-(Date.now()-began))/1000))} seconds remaining`;
+          const shouldShow = Math.min(beats.length, Math.floor(fraction*beats.length)+1);
+          const ticker = byId('battle-ticker');
+          while (ticker && shown < shouldShow) { const line = document.createElement('p'); line.textContent = beats[shown++]; ticker.appendChild(line); ticker.scrollTop = ticker.scrollHeight; }
+          if (fraction >= 1) { clearInterval(timer); resolve(); }
+        }, 250);
+      });
       overlay.remove();
       await refresh(true);
       resultModal(result.title, '⚔️', result.story, result.changes, `${result.moved} trait points moved. ${result.stolen_hero ? result.stolen_hero + ' changed cities.' : ''} The attacker had a ${result.chance}% win chance from traits, fighters, heroes, and defenses.`, true, result.sampled_traits);
@@ -694,12 +746,13 @@ let nextDueCheck = 0;
 setInterval(() => {
   if (!state.me) return;
   document.querySelectorAll('[data-countdown]').forEach(element => { element.textContent = clock(Number(element.dataset.countdown)); });
+  document.querySelectorAll('[data-research-progress]').forEach(element => { element.style.width = researchPercent() + '%'; });
   const desk = byId('errand-timer');
   if (desk) desk.textContent = clock(state.me.next_errand_at) === 'ready' ? 'READY NOW' : 'NEXT JOB IN ' + clock(state.me.next_errand_at);
   const arena = byId('battle-timer');
   if (arena) arena.textContent = clock(state.me.next_battle_at) === 'ready' ? 'READY NOW' : 'READY IN ' + clock(state.me.next_battle_at);
   const now = Math.floor(Date.now() / 1000);
-  if ((now >= state.me.next_tokens_at || now >= state.me.next_errand_at) && now >= nextDueCheck && !state.busy) {
+  if ((now >= state.me.next_tokens_at || now >= state.me.next_errand_at || (state.research && now >= state.research.ready_at)) && now >= nextDueCheck && !state.busy) {
     nextDueCheck = now + 20;
     refresh(true);
   }

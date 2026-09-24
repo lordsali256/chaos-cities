@@ -227,6 +227,12 @@ def init_db():
           FOREIGN KEY(sender_id) REFERENCES cities(id), FOREIGN KEY(target_id) REFERENCES cities(id));
         CREATE INDEX IF NOT EXISTS trade_sender ON trade_offers(sender_id,status,created_at DESC);
         CREATE INDEX IF NOT EXISTS trade_target ON trade_offers(target_id,status,created_at DESC);
+        CREATE TABLE IF NOT EXISTS research_queue (
+          city_id TEXT PRIMARY KEY, node_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+          ready_at INTEGER NOT NULL, FOREIGN KEY(city_id) REFERENCES cities(id));
+        CREATE TABLE IF NOT EXISTS daily_taglines (
+          city_id TEXT NOT NULL, day INTEGER NOT NULL, tagline TEXT NOT NULL,
+          PRIMARY KEY(city_id,day));
         """)
         city_columns = {row[1] for row in db.execute("PRAGMA table_info(cities)")}
         for name, definition in {
@@ -392,6 +398,13 @@ def city_bonuses(city, nodes=None):
 
 
 def daily_tick(db, city, now):
+    active = db.execute("SELECT * FROM research_queue WHERE city_id=?", (city["id"],)).fetchone()
+    if active and now >= active["ready_at"]:
+        owned = set(json.loads(city["tech_nodes"]))
+        owned.add(active["node_id"])
+        db.execute("UPDATE cities SET tech_nodes=? WHERE id=?", (json.dumps(sorted(owned)), city["id"]))
+        db.execute("DELETE FROM research_queue WHERE city_id=?", (city["id"],))
+        city = db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
     token_hours = min(720, max(0, (now - city["last_token"]) // TOKEN_SECONDS))
     if token_hours:
         db.execute("UPDATE cities SET tokens=MIN(?,tokens+?),last_token=? WHERE id=?", (MAX_TOKENS, token_hours * DAILY_TOKENS, city["last_token"] + token_hours * TOKEN_SECONDS, city["id"]))
@@ -468,6 +481,58 @@ def city_view(row, private=False):
     return data
 
 
+def research_duration(node):
+    # Short first steps, then progressively longer projects; all durations are server-owned.
+    return min(1800, 45 + 25 * len(node["requires"]) + 6 * node["tech"])
+
+
+def daily_tagline(db, city, now):
+    day = now // 86400
+    found = db.execute("SELECT tagline FROM daily_taglines WHERE city_id=? AND day=?", (city["id"], day)).fetchone()
+    if found:
+        return found["tagline"]
+    gentle = [
+        "The town council has approved a second lunch break for the first lunch break.",
+        "Our pigeons have formed a neighborhood watch. Nobody hired them.",
+        "The mayor has declared the potholes a protected local species.",
+        "The library now charges overdue fines in dramatic apologies.",
+        "Our farmers report a bumper crop of very judgmental carrots.",
+        "The town clock is five minutes fast and extremely proud of it.",
+    ]
+    strange = [
+        "The bus route has elected itself mayor. Ridership is up.",
+        "A cloud asked for zoning permission and brought three references.",
+        "The sewer orchestra is rehearsing the national anthem backward.",
+        "Our traffic lights have begun offering unsolicited life advice.",
+        "The moon sent a complaint about our streetlights being too ambitious.",
+        "The courthouse found the laws hiding in a vending machine.",
+    ]
+    pool = gentle if city["weirdness"] < 25 else gentle + strange
+    pick = int.from_bytes(hashlib.sha256(f"{city['id']}:{day}".encode()).digest()[:8], "big") % len(pool)
+    tagline = pool[pick]
+    db.execute("INSERT INTO daily_taglines VALUES (?,?,?)", (city["id"], day, tagline))
+    db.execute("DELETE FROM daily_taglines WHERE day<?", (day - 7,))
+    return tagline
+
+
+def prepare_daily_tagline(city_id):
+    tomorrow = int(time.time()) // 86400 + 1
+    with LOCK, database() as db:
+        city = db.execute("SELECT name,weirdness FROM cities WHERE id=?", (city_id,)).fetchone()
+        if not city or db.execute("SELECT 1 FROM daily_taglines WHERE city_id=? AND day=?", (city_id, tomorrow)).fetchone():
+            return
+    try:
+        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "options": {"num_predict": 90, "temperature": 1.2}, "messages": [{"role": "system", "content": "Write one original, funny, G-rated daily city notice, 8-22 words, in third person. Return only the sentence. For low weirdness, use ordinary small-town absurdity; for high weirdness, mild surreal comedy. Do not mention game mechanics, stats, or AI."}, {"role": "user", "content": f"City: {city['name']}. Weirdness: {city['weirdness']}/100. Make tomorrow's notice unlike a stock slogan. Nonce: {secrets.token_hex(4)}"}]}, timeout=12)
+        response.raise_for_status()
+        tagline = response.json()["message"]["content"].strip().strip('"')[:160]
+        if not 35 <= len(tagline) <= 160 or not safe_content(tagline):
+            return
+        with LOCK, database() as db:
+            db.execute("INSERT OR IGNORE INTO daily_taglines VALUES (?,?,?)", (city_id, tomorrow, tagline))
+    except Exception:
+        pass
+
+
 def shop_view(city):
     levels = json.loads(city["upgrades"])
     nodes = set(json.loads(city["tech_nodes"]))
@@ -487,12 +552,15 @@ def research(data: ResearchRequest, authorization: str | None = Header(None)):
     with LOCK, database() as db:
         city = daily_tick(db, auth(db, authorization), int(time.time()))
         owned = set(json.loads(city["tech_nodes"]))
+        if db.execute("SELECT 1 FROM research_queue WHERE city_id=?", (city["id"],)).fetchone():
+            raise HTTPException(409, "Another research project is already running")
         if node["id"] in owned or city["tech"] < node["tech"] or not set(node["requires"]) <= owned:
             raise HTTPException(409, "This technology is not available yet")
         if city["cash"] < node["cost"]:
             raise HTTPException(409, "Not enough Cash")
-        owned.add(node["id"])
-        db.execute("UPDATE cities SET cash=ROUND(cash-?,4),tech_nodes=? WHERE id=?", (node["cost"], json.dumps(sorted(owned)), city["id"]))
+        now = int(time.time())
+        db.execute("UPDATE cities SET cash=ROUND(cash-?,4) WHERE id=?", (node["cost"], city["id"]))
+        db.execute("INSERT INTO research_queue VALUES (?,?,?,?)", (city["id"], node["id"], now, now + research_duration(node)))
     return {"ok": True, "city": me(authorization)["city"]}
 
 
@@ -627,7 +695,8 @@ def me(authorization: str | None = Header(None)):
         building_offers = [building_offer_view(row) for row in db.execute("SELECT * FROM prepared_buildings WHERE city_id=? ORDER BY blueprint_id", (city["id"],))]
         next_offers_at = min((row["created_at"] for row in db.execute("SELECT created_at FROM chaos_offers WHERE city_id=?", (city["id"],))), default=int(time.time())) + OFFER_SECONDS
         residents = [resident_view(row) for row in db.execute("SELECT name,race FROM residents WHERE city_id=? ORDER BY ordinal", (city["id"],))]
-        return {"city": city_view(city, True), "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"])}
+        active = db.execute("SELECT * FROM research_queue WHERE city_id=?", (city["id"],)).fetchone()
+        return {"city": city_view(city, True), "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"])}
 
 
 @app.post("/api/city/rename")
@@ -1292,7 +1361,7 @@ def battle_story(actor, target, sampled, winner, reward):
     title = f"The {sampled[0]['name']} and {sampled[1]['name']} Incident"
     fallback = f"I am {target}. {actor} arrived with twenty arguments about my personality. {winner} won a ridiculous civic contest and claimed {reward}."
     try:
-        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 220, "temperature": 1.1}, "messages": [{"role": "system", "content": "Invent one unique funny G-rated city-versus-city event. Use the provided twenty traits and their scores to reflect BOTH city personalities. The result and reward are already decided; do not change them or invent more rewards. Answer JSON with short title and 2-sentence story spoken by the defending city in first person. No markdown."}, {"role": "user", "content": json.dumps({"attacker": actor, "defender": target, "twenty_traits": sampled, "winner": winner, "reward": reward, "nonce": secrets.token_hex(4)})}]}, timeout=18)
+        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 390, "temperature": 1.1}, "messages": [{"role": "system", "content": "Invent one unique funny G-rated city-versus-city event. Use the provided twenty traits and their scores to reflect BOTH city personalities. The result and reward are already decided; do not change them or invent more rewards. Answer JSON with short title, 2-sentence story spoken by the defending city in first person, and beats: six short funny live-commentary sentences for a battle animation. Beats must not reveal the winner or reward. No markdown."}, {"role": "user", "content": json.dumps({"attacker": actor, "defender": target, "twenty_traits": sampled, "winner": winner, "reward": reward, "nonce": secrets.token_hex(4)})}]}, timeout=18)
         response.raise_for_status()
         content = json.loads(response.json()["message"]["content"])
         proposed_title = str(content.get("title", "")).strip()[:90]
@@ -1302,10 +1371,12 @@ def battle_story(actor, target, sampled, winner, reward):
                 digest = hashlib.sha256(proposed_title.casefold().encode()).hexdigest()
                 if not db.execute("SELECT 1 FROM used_content WHERE content_hash=?", (digest,)).fetchone():
                     db.execute("INSERT INTO used_content VALUES (?,?)", (digest, int(time.time())))
-                    return proposed_title, proposed_story
+                    beats = [str(line).strip()[:140] for line in content.get("beats", []) if isinstance(line, str)]
+                    beats = [line for line in beats if 15 <= len(line) <= 140 and safe_content(line) and not re.search(r"\b(won|winner|victory|reward|stole)\b", line, re.I)]
+                    return proposed_title, proposed_story, beats[:8]
     except Exception:
         pass
-    return title, fallback
+    return title, fallback, []
 
 
 @app.post("/api/battles")
@@ -1393,10 +1464,12 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         log_id = str(uuid.uuid4())
         story = f"I am {target['name']}. {actor['name']} challenged me with twenty arguments. {winner['name']} earned {reward}."
         db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (log_id, actor["id"], target["id"], "trait_battle", int(success), story, json.dumps({"trait_points": moved, "hero": stolen_hero["name"] if stolen_hero else None}), now, "battle", json.dumps(changes), title))
-    generated_title, generated = battle_story(actor["name"], target["name"], sampled, winner["name"], reward)
+    narrative = battle_story(actor["name"], target["name"], sampled, winner["name"], reward)
+    generated_title, generated = narrative[:2]
+    beats = narrative[2] if len(narrative) > 2 else []
     with LOCK, database() as db:
         db.execute("UPDATE event_log SET title=?,story=? WHERE id=?", (generated_title, generated, log_id))
-    return {"success": success, "title": generated_title, "story": generated, "changes": changes, "sampled_traits": sampled, "moved": moved, "stolen_hero": stolen_hero["name"] if stolen_hero else None, "chance": chance, "city": me(authorization)["city"]}
+    return {"success": success, "title": generated_title, "story": generated, "beats": beats, "changes": changes, "sampled_traits": sampled, "moved": moved, "stolen_hero": stolen_hero["name"] if stolen_hero else None, "chance": chance, "city": me(authorization)["city"]}
 
 
 def process_ambient_city(city_id):
@@ -1458,6 +1531,7 @@ def content_worker():
                 fill_prepared_heroes(city_id)
                 fill_prepared_buildings(city_id)
                 fill_resident_names(city_id)
+                prepare_daily_tagline(city_id)
         except Exception as exc:
             print(f"Content worker: {type(exc).__name__}: {exc}", flush=True)
         time.sleep(30)

@@ -32,6 +32,11 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] Seventy-two gradual landscape and mood color paths with a meadow starting point.
 - [x] Named residents across 36 races; preferred enemies and equipped hero ally bonuses participate in bounded PvP odds.
 - [x] Optional Google sign-in flow in web and Android, with server-side token verification and 30-day sessions; awaits the owner's Google OAuth client ID for live testing.
+- [x] Research runs on a server-owned timer; the branch-focused dot tree shows countdown and progress in the node tooltip and details.
+- [x] Trait groups can be switched off for a flat sortable list, with the choice saved on the device.
+- [x] Each city gets a funny daily notice; the local model prepares the next day's notice while a stable fallback covers gaps.
+- [x] City page highlights the strongest recent positive event rewards.
+- [x] Battles now play a 42-second animated reveal with commentary based on sampled traits; the local model supplies ticker lines when available.
 
 ## Verify and polish
 
@@ -39,14 +44,14 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [ ] Complete an interactive Pixel playtest with the latest multiplayer APK while the phone is unlocked.
 - [ ] Scan the city QR with the Pixel camera and verify the complete Android sign-in once the phone reconnects.
 - [ ] Tune local AI battle generation for variety and accurate personality descriptions.
-- [ ] Configure and test Google OAuth with the owner's web client ID and Android credentials.
+- [ ] Google OAuth is on hold at the owner's request; city-key entry remains the visible login.
 - [ ] Add richer individual hero abilities and more detailed combat feedback.
 - [ ] Add account recovery and further abuse protection before public hosting.
 
 ## Planned
 
 - [ ] Deploy to the owner's HTTPS server and invite friends.
-- [ ] Optional richer battle animations and effects.
+- [ ] Further battle art and effects after phone playtesting.
 
 ## Decisions still open
 

@@ -16,7 +16,7 @@ A local Qwen model prepares one-use chaos choices, hero names, and building plan
 
 **City trades** let a mayor propose a citizen swap, a Wealth exchange, a gift, or a request. Nothing moves until the addressed mayor accepts. Both citizens' current ownership and both cities' Wealth are checked again at acceptance; transferred citizens enter the destination's reserve roster. Offers expire after 48 hours, and a city may have at most three open offers. Either side can close an offer before acceptance. The local model writes a funny receipt after a completed trade, while the server records the exact transfer.
 
-**Research and Cash:** Each city receives a small Cash stipend plus 0.02 Cash per point of Wealth each hour. The branching tech tree requires a Tech score, earlier connected research, and Cash. The shop buys faster Cash income, passive Food/Morale/Tech/Wealth growth, hero chairs, and building plots. Passive stat growth begins at 0.001 points per hour and saves fractions until a whole point is reached. The existing daily food and population simulation still runs once per real day.
+**Research and Cash:** Each city receives a small Cash stipend plus 0.02 Cash per point of Wealth each hour. The branch-focused dot tree requires a Tech score, earlier connected research, and Cash. One research project runs at a time, with a timer and progress in the selected dot's tooltip. Its effect starts when the timer finishes. The shop buys faster Cash income, passive Food/Morale/Tech/Wealth growth, hero chairs, and building plots. Passive stat growth begins at 0.001 points per hour and saves fractions until a whole point is reached. The existing daily food and population simulation still runs once per real day.
 
 **City stats:** Food is produced and eaten daily; a shortage shrinks population. Morale above 45 plus food above 35 allows one new citizen per day. Wealth below 10 lowers morale, while wealth at least 100 raises it. Tech adds one daily food for each full 35 points. Equipped heroes add their daily bonuses.
 
@@ -30,9 +30,9 @@ The Android debug APK is available in the [demo release](https://github.com/lord
 
 The APK is a prototype debug build, not a Play Store release. The QR handoff and new Google login still need an on-device test when the Pixel reconnects. This version uses a stable demo signing key for future debug updates. Save your city key before replacing or uninstalling the app.
 
-## Set up Google sign-in
+## Google sign-in (on hold)
 
-Google sign-in is built into the web app and Android APK but stays hidden until a Google OAuth **web client ID** is configured. The existing city-key login remains available.
+Google sign-in is paused at the owner's request. The app currently shows city-key login; the optional OAuth implementation remains in source for later work.
 
 1. In the [Google Auth Platform](https://console.cloud.google.com/auth/overview), create or select a project. Set its branding to **Chaos Cities** and choose an audience that allows your friends to sign in. During testing, add each friend's Google account as a test user if Google requires it.
 2. In **Clients**, create a **Web application** client. Add `http://localhost:3010` and `http://127.0.0.1:3010` as Authorized JavaScript origins for desktop tests. Add your eventual `https://your-domain` origin when the public server is ready. Copy the web **client ID**, not the client secret.

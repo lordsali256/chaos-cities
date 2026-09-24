@@ -39,7 +39,17 @@ with tempfile.TemporaryDirectory() as folder:
     assert chosen.status_code == 200 and chosen.json()["city"]["cash_per_hour"] > view["city"]["cash_per_hour"]
     assert client.post("/api/specializations", json={"specialization_id": "roof_astronomers"}, headers=head).status_code == 409
 
+    def finish_research():
+        with main.database() as db:
+            db.execute("UPDATE research_queue SET ready_at=? WHERE city_id=?", (int(time.time())-1, city_id))
+        return client.get("/api/me", headers=head).json()
+
     assert client.post("/api/research", json={"node_id": "city_charter"}, headers=head).status_code == 200
+    pending = client.get("/api/me", headers=head).json()
+    assert pending["research"]["node_id"] == "city_charter"
+    assert "city_charter" not in pending["city"]["tech_nodes"]
+    assert client.post("/api/research", json={"node_id": "city_charter"}, headers=head).status_code == 409
+    assert finish_research()["research"] is None
     assert client.post("/api/shop", json={"item_id": "income"}, headers=head).status_code == 200
     with main.database() as db:
         db.execute("UPDATE cities SET tech=65,cash=500,wealth=100,specialization_changed_at=? WHERE id=?", (now-86400, city_id))
@@ -49,6 +59,7 @@ with tempfile.TemporaryDirectory() as folder:
     for node_id in ("soup_science", "pocket_parliament", "storytime_stool", "hero_hall", "plot_twist"):
         result = client.post("/api/research", json={"node_id": node_id}, headers=head)
         assert result.status_code == 200, result.text
+        assert node_id in finish_research()["city"]["tech_nodes"]
     assert client.post("/api/shop", json={"item_id": "hero_slot"}, headers=head).json()["city"]["hero_slots"] == 2
     assert client.post("/api/shop", json={"item_id": "building_slot"}, headers=head).json()["city"]["building_slots"] == 2
     assert client.post("/api/shop", json={"item_id": "tech"}, headers=head).json()["city"]["upgrades"]["tech"] == 1
