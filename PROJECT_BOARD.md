@@ -26,7 +26,8 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] Latest multiplayer APK installed on the Pixel 11 Pro XL; USB server forwarding restored.
 - [x] Fixed blank Android launch screen caused by incorrect bundled asset paths; verified the welcome screen on the Pixel.
 - [x] Home-network server access and phone QR handoff for an existing city; unreachable servers now report an error instead of waiting indefinitely.
-- [x] Public GitHub repository created with source filtering for credentials, database files, and Android signing key.
+- [x] Public GitHub repository and downloadable Android demo release published; credentials, database files, and signing key excluded.
+- [x] Latest Android APK installed on the Pixel over USB; interactive check waits for the phone to be unlocked.
 - [x] Compact five-stat strip on every tab, easier research map navigation with inline details, city renaming, and a Getting Started glossary.
 - [x] Seventy-two gradual landscape and mood color paths with a meadow starting point.
 - [x] Named residents across 36 races; preferred enemies and equipped hero ally bonuses participate in bounded PvP odds.
