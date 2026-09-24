@@ -1,0 +1,31 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /data/chaos.db
+      DAY_SECONDS: ${DAY_SECONDS:-86400}
+      DAILY_TOKENS: ${DAILY_TOKENS:-1}
+      TOKEN_SECONDS: ${TOKEN_SECONDS:-3600}
+      AMBIENT_SECONDS: ${AMBIENT_SECONDS:-600}
+      ERRAND_SECONDS: ${ERRAND_SECONDS:-120}
+      INVITE_CODE: ${INVITE_CODE:-}
+      PHONE_SERVER_URL: ${PHONE_SERVER_URL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      OLLAMA_URL: http://free-llm-ollama:11434
+      OLLAMA_MODEL: qwen3.5:4b
+    volumes:
+      - game_data:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3010}:8000"
+    networks:
+      - default
+      - llm
+volumes:
+  game_data:
+networks:
+  llm:
+    external: true
+    name: free-llm-stack_private

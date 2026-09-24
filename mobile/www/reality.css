@@ -1,0 +1,31 @@
+/* Twelve skyline stages follow the city's current weirdness score. */
+body{--sky-top:#42899a;--sky-bottom:#b2c889;--orb:#f9dfa0;--ground:#557d50;--tower:#496755;--odd:0;--portal:0;--eye:0;background:radial-gradient(circle at 75% 0%,color-mix(in srgb,var(--sky-top) 32%,transparent),transparent 34rem),#152620;transition:background 2s ease}
+body[data-reality-stage="1"]{--sky-top:#4f82a1;--sky-bottom:#d3b994;--orb:#f6dcb0}
+body[data-reality-stage="2"]{--sky-top:#527198;--sky-bottom:#b7abb7;--orb:#eacbd4;--odd:.12}
+body[data-reality-stage="3"]{--sky-top:#554e87;--sky-bottom:#aa83af;--orb:#ddb9ed;--odd:.22}
+body[data-reality-stage="4"]{--sky-top:#54528c;--sky-bottom:#8d8ec0;--orb:#e9b9fa;--odd:.32}
+body[data-reality-stage="5"]{--sky-top:#4b6089;--sky-bottom:#8a82b0;--orb:#d3f0d1;--odd:.42}
+body[data-reality-stage="6"]{--sky-top:#394681;--sky-bottom:#847ab6;--orb:#b9f2e4;--odd:.54}
+body[data-reality-stage="7"]{--sky-top:#513c82;--sky-bottom:#9c6eb0;--orb:#ffc6dc;--odd:.62}
+body[data-reality-stage="8"]{--sky-top:#55317d;--sky-bottom:#b96c9a;--orb:#bbffde;--odd:.72;--portal:.45}
+body[data-reality-stage="9"]{--sky-top:#3d2a74;--sky-bottom:#b15fa7;--orb:#c4fffa;--odd:.8;--portal:.75;--eye:.55}
+body[data-reality-stage="10"]{--sky-top:#322069;--sky-bottom:#c461aa;--orb:#faffaf;--odd:.9;--portal:.9;--eye:.8}
+body[data-reality-stage="11"]{--sky-top:#241558;--sky-bottom:#ce5999;--orb:#b4fff4;--odd:1;--portal:1;--eye:1}
+.hero{background:linear-gradient(90deg,#1b3931 0%,#1b3931 35%,transparent 74%),linear-gradient(145deg,var(--sky-top),var(--sky-bottom));transition:background 2s ease;isolation:isolate}
+.hero:after{display:none}
+.hero>.eyebrow,.hero>h1,.hero>p,.hero>.reality-label{position:relative;z-index:2;text-shadow:0 2px 12px #0b1637ba}
+.hero>.reality-label{display:inline-block;margin-top:17px;border:1px solid #ffffff69;border-radius:99px;background:#1211277a;padding:7px 10px;color:#f7e6bf;font-size:11px;font-weight:800}
+.city-scene{position:absolute;inset:0 0 0 43%;overflow:hidden;pointer-events:none;z-index:0;opacity:.95}
+.scene-sun{position:absolute;right:17%;top:15%;width:68px;height:68px;border-radius:50%;background:var(--orb);box-shadow:0 0 30px 12px color-mix(in srgb,var(--orb) 45%,transparent);transform:translateY(calc(var(--odd) * -10px));transition:all 1s ease}
+.scene-cloud{position:absolute;right:8%;top:26%;width:112px;height:26px;border-radius:50%;background:#f4f0e0b8;box-shadow:-38px 9px 0 -4px #f4f0e099,32px 5px 0 -5px #f4f0e099;transform:rotate(calc(var(--odd) * 18deg));transition:transform 1s ease}
+.scene-ground{position:absolute;bottom:0;left:0;right:0;height:18px;background:var(--ground)}
+.scene-building{position:absolute;bottom:15px;width:20%;background:var(--tower);clip-path:polygon(0 7%,35% 7%,35% 0,65% 0,65% 7%,100% 7%,100% 100%,0 100%);box-shadow:inset -11px 0 #0002;transition:transform 1.1s ease}
+.scene-building:after{content:'';position:absolute;inset:24px 11px 8px;background:repeating-linear-gradient(0deg,transparent 0 16px,#ffe7ae 16px 21px,transparent 21px 31px);opacity:.8}
+.scene-building.one{left:14%;height:105px;transform:translateY(calc(var(--odd) * -21px)) rotate(calc(var(--odd) * -3deg))}
+.scene-building.two{left:42%;height:139px;transform:translateY(calc(var(--odd) * -36px)) rotate(calc(var(--odd) * 4deg))}
+.scene-building.three{left:73%;height:91px;transform:translateY(calc(var(--odd) * -13px)) rotate(calc(var(--odd) * -6deg))}
+.scene-portal{position:absolute;right:31%;top:18%;width:112px;height:112px;border-radius:50%;border:12px solid #99fff0;box-shadow:0 0 30px #adfbea,inset 0 0 24px #e0afff;background:radial-gradient(circle,#f78ded8a,#472c9c);opacity:var(--portal);transform:rotate(calc(var(--odd) * 130deg)) scale(calc(.5 + var(--portal) * .5));transition:all 1s ease}
+.scene-eye{position:absolute;right:15%;bottom:34px;width:44px;height:27px;border-radius:50%;background:#d7f9ee;opacity:var(--eye);transform:rotate(calc(var(--odd) * -17deg));transition:all 1s ease}
+.scene-eye:after{content:'';display:block;margin:4px auto;width:19px;height:19px;border-radius:50%;background:#34216a;box-shadow:inset 5px 1px #895bee}
+@media(max-width:690px){.city-scene{left:38%;opacity:.66}.hero{background:linear-gradient(90deg,#1b3931 0%,#1b3931aa 53%,transparent 100%),linear-gradient(145deg,var(--sky-top),var(--sky-bottom))}.scene-building{width:25%}}
+@media(prefers-reduced-motion:reduce){body,.hero,.scene-sun,.scene-cloud,.scene-building,.scene-portal,.scene-eye{transition:none}}

@@ -1,0 +1,6 @@
+{
+  "appId": "com.chaoscities.game",
+  "appName": "Chaos Cities",
+  "webDir": "www",
+  "android": {"allowMixedContent": true}
+}

@@ -1,0 +1,13 @@
+.env
+*.db*
+__pycache__/
+tools/
+*.log
+*.zip
+mobile/node_modules/
+mobile/debug.keystore
+mobile/android/local.properties
+mobile/android/.gradle/
+mobile/android/**/build/
+mobile/android/app/src/main/assets/public/
+ChaosCities-demo.apk

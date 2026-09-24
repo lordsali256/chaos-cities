@@ -1,0 +1,19 @@
+{
+  "name": "chaos-cities",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "bundle": "esbuild native-entry.js --bundle --format=iife --minify --outfile=www/native-app.js",
+    "android": "npm run bundle && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.0.0",
+    "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "esbuild": "^0.28.2"
+  }
+}

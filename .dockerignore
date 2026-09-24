@@ -1,0 +1,5 @@
+mobile/node_modules
+mobile/android
+*.apk
+*.db
+__pycache__

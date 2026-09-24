@@ -1,0 +1,27 @@
+FROM eclipse-temurin:21-jdk AS build
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip && rm -rf /var/lib/apt/lists/*
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+RUN mkdir -p "$ANDROID_HOME/cmdline-tools" && \
+    curl -fL https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip -o /tmp/android-tools.zip && \
+    unzip -q /tmp/android-tools.zip -d /tmp/android-tools && \
+    mv /tmp/android-tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest" && \
+    rm /tmp/android-tools.zip
+RUN yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+RUN for package in "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"; do \
+      attempt=0; until "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$package"; do \
+        attempt=$((attempt+1)); [ "$attempt" -lt 5 ] || exit 1; sleep 8; \
+      done; \
+    done
+WORKDIR /project
+COPY android/ ./android/
+COPY node_modules/@capacitor/android/ ./node_modules/@capacitor/android/
+COPY node_modules/@capacitor/app/ ./node_modules/@capacitor/app/
+RUN mkdir -p /root/.android
+COPY debug.keystore /root/.android/debug.keystore
+WORKDIR /project/android
+RUN chmod +x gradlew && attempt=0; until ./gradlew --no-daemon assembleDebug; do \
+      attempt=$((attempt+1)); [ "$attempt" -lt 5 ] || exit 1; sleep 8; \
+    done
+FROM scratch
+COPY --from=build /project/android/app/build/outputs/apk/debug/app-debug.apk /ChaosCities-demo.apk

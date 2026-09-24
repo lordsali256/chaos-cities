@@ -1,0 +1,22 @@
+# Use on a separate public host with DNS pointed at that host.
+# Do not enable this alongside another service already using ports 80/443.
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      GAME_DOMAIN: ${GAME_DOMAIN:?Set GAME_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - default
+    depends_on:
+      - server
+volumes:
+  caddy_data:
+  caddy_config:
