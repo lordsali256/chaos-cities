@@ -466,6 +466,8 @@ window.renameCity = () => {
 };
 window.jumpTech = branch => {
   state.techBranch = branch;
+  const branchNodes = state.techTree.filter(node => node.branch === branch).sort((a,b) => a.y-b.y);
+  state.selectedTech = branchNodes.find(node => !state.me.tech_nodes.includes(node.id))?.id || branchNodes[0]?.id || 'city_charter';
   render();
 };
 window.chooseSpecialization = id => {
