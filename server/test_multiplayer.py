@@ -80,8 +80,10 @@ with tempfile.TemporaryDirectory() as folder:
     assert quota["sent_today"] == main.TRADE_DAILY_LIMIT
     assert client.post("/api/trades", json={"target_city_id": second["city"]["id"], "request_wealth": 1}, headers=heads[0]).status_code == 429
 
-    for route in ("/api/me", "/api/trades"):
+    for route in ("/api/me", "/api/trades", "/api/cities", "/api/feed"):
         assert client.get(route).status_code == 401
+    private_feed = client.get("/api/feed", headers=heads[0]).json()["feed"]
+    assert all(item["actor"] == "Alphaburg" or item["target"] == "Alphaburg" for item in private_feed)
     assert client.post("/api/battles", json={"target_city_id": target_id}).status_code == 401
     assert client.post("/api/trades", json={"target_city_id": target_id, "request_wealth": 1}).status_code == 401
     assert client.post(f"/api/trades/{offers[0].json()['id']}/accept", headers=heads[1]).status_code == 404

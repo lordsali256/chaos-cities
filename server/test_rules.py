@@ -118,7 +118,7 @@ with tempfile.TemporaryDirectory() as folder:
     loss = client.post("/api/battles", json={"target_city_id": third["city"]["id"]}, headers=head)
     assert loss.status_code == 200 and not loss.json()["success"], loss.text
     assert all(value["delta"] <= 0 for value in loss.json()["changes"]["attacker_traits"].values())
-    records = client.get("/api/cities").json()["battle_records"]
+    records = client.get("/api/cities", headers=head).json()["battle_records"]
     assert records[city_id] == {"wins": 1, "losses": 1}
     with main.database() as db:
         db.execute("UPDATE cities SET last_battle=0 WHERE id=?", (city_id,))

@@ -743,6 +743,7 @@ def choose_specialization(data: SpecializationRequest, authorization: str | None
 @app.get("/api/cities")
 def cities(authorization: str | None = Header(None)):
     with LOCK, database() as db:
+        actor = auth(db, authorization)
         now = int(time.time())
         rows = db.execute("SELECT * FROM cities ORDER BY created_at DESC LIMIT 100").fetchall()
         records = {row["id"]: {"wins": 0, "losses": 0} for row in rows}
@@ -751,10 +752,7 @@ def cities(authorization: str | None = Header(None)):
             loser = fight["target_id"] if fight["success"] else fight["actor_id"]
             if winner in records: records[winner]["wins"] += 1
             if loser in records: records[loser]["losses"] += 1
-        pair_attacks = {}
-        if authorization:
-            actor = auth(db, authorization)
-            pair_attacks = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM event_log WHERE kind='battle' AND actor_id=? AND created_at>=? GROUP BY target_id", (actor["id"], now-86400))}
+        pair_attacks = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM event_log WHERE kind='battle' AND actor_id=? AND created_at>=? GROUP BY target_id", (actor["id"], now-86400))}
         incoming = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM event_log WHERE actor_id<>target_id AND kind IN ('battle','cast') AND created_at>=? GROUP BY target_id", (now-86400,))}
         public_cities = []
         for row in rows:
@@ -880,9 +878,10 @@ def close_trade(offer_id: str, authorization: str | None = Header(None)):
 
 
 @app.get("/api/feed")
-def feed():
+def feed(authorization: str | None = Header(None)):
     with database() as db:
-        return {"feed": recent_feed(db)}
+        city = auth(db, authorization)
+        return {"feed": recent_feed(db, city["id"])}
 
 
 def fallback_story(event, actor, target, success):
