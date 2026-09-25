@@ -181,6 +181,49 @@ SHOP = [
 ]
 SHOP_BY_ID = {item["id"]: item for item in SHOP}
 
+# Goods survive between visits. Services belong to the current hour only.
+GOODS = ("grain", "timber", "ore", "planks", "tools", "meals")
+SERVICES = ("care", "craft", "insight")
+RECIPES = {
+    "saw_planks": {"name": "Saw planks", "goods": {"timber": 2}, "services": {"craft": 1}, "makes": {"planks": 1}},
+    "forge_tools": {"name": "Forge tools", "goods": {"timber": 1, "ore": 1}, "services": {"craft": 1}, "makes": {"tools": 1}},
+    "cook_meals": {"name": "Cook meals", "goods": {"grain": 2}, "services": {"care": 1}, "makes": {"meals": 2}},
+    "share_meal": {"name": "Feed volunteers", "goods": {"meals": 1}, "services": {}, "makes_services": {"care": 1}},
+    "equip_crews": {"name": "Equip work crews", "goods": {"tools": 1}, "services": {}, "makes_services": {"craft": 2}},
+    "study_ore": {"name": "Study strange ore", "goods": {"ore": 2}, "services": {}, "makes_services": {"insight": 1}},
+    "serve_feast": {"name": "Serve a feast", "goods": {"meals": 2}, "services": {"care": 1}, "stat": "food", "amount": 3},
+    "repair_market": {"name": "Repair market stalls", "goods": {"planks": 1, "tools": 1}, "services": {"craft": 1}, "stat": "wealth", "amount": 2},
+    "run_workshop": {"name": "Run a workshop", "goods": {"tools": 1}, "services": {"insight": 1}, "stat": "tech", "amount": 2},
+    "community_supper": {"name": "Host a community supper", "goods": {"meals": 1}, "services": {"care": 1}, "stat": "morale", "amount": 3},
+}
+
+ALIEN_WORDS = {"Zhaaru": "neighbor", "Vektil": "festival", "Qoruun": "visitor", "Nuvaxi": "garden", "Threll": "market", "Ozzari": "friend", "Kivora": "dream", "Yeluun": "hero", "Dravik": "machine", "Suveth": "home", "Phaali": "star", "Wekora": "soup"}
+
+
+def new_alien_word():
+    return secrets.choice(tuple(ALIEN_WORDS)) if secrets.randbelow(100) < 3 else ""
+
+
+def learn_alien_word(db, city_id, word):
+    if word in ALIEN_WORDS:
+        return db.execute("INSERT OR IGNORE INTO alien_knowledge (city_id,word) VALUES (?,?)", (city_id, word)).rowcount > 0
+    return False
+
+
+def alien_name(name, word):
+    return f"{word} {name}" if word else name
+
+
+def maybe_alien_log(db, log_id, *city_ids):
+    word = new_alien_word()
+    if not word:
+        return
+    row = db.execute("SELECT title FROM event_log WHERE id=?", (log_id,)).fetchone()
+    if row:
+        db.execute("UPDATE event_log SET title=? WHERE id=?", (alien_name(row["title"], word), log_id))
+        for city_id in set(city_ids):
+            learn_alien_word(db, city_id, word)
+
 
 @contextmanager
 def database():
@@ -281,6 +324,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS hall_claims (
           city_id TEXT NOT NULL, kind TEXT NOT NULL, claim_key TEXT NOT NULL,
           claimed_at INTEGER NOT NULL, PRIMARY KEY(city_id,kind,claim_key));
+        CREATE TABLE IF NOT EXISTS city_services (
+          city_id TEXT PRIMARY KEY, period INTEGER NOT NULL,
+          care INTEGER NOT NULL, craft INTEGER NOT NULL, insight INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS alien_knowledge (
+          city_id TEXT NOT NULL, word TEXT NOT NULL, PRIMARY KEY(city_id,word));
         """)
         city_columns = {row[1] for row in db.execute("PRAGMA table_info(cities)")}
         for name, definition in {
@@ -304,6 +352,7 @@ def init_db():
             "specialization": "TEXT NOT NULL DEFAULT ''",
             "specialization_changed_at": "INTEGER NOT NULL DEFAULT 0",
             "renamed_at": "INTEGER NOT NULL DEFAULT 0",
+            "goods": "TEXT NOT NULL DEFAULT '{}'",
         }.items():
             if name not in city_columns:
                 db.execute(f"ALTER TABLE cities ADD COLUMN {name} {definition}")
@@ -337,6 +386,9 @@ def init_db():
             db.execute("UPDATE heroes SET race=?,ally_race=? WHERE id=?", (race, ally, hero["id"]))
         if "ai_named" not in {row[1] for row in db.execute("PRAGMA table_info(residents)")}:
             db.execute("ALTER TABLE residents ADD COLUMN ai_named INTEGER NOT NULL DEFAULT 0")
+        for table in ("chaos_offers", "heroes", "prepared_heroes", "residents"):
+            if "alien_word" not in {row[1] for row in db.execute(f"PRAGMA table_info({table})")}:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN alien_word TEXT NOT NULL DEFAULT ''")
 
 
 init_db()
@@ -386,6 +438,10 @@ class PurchaseRequest(BaseModel):
 
 class ResearchRequest(BaseModel):
     node_id: str
+
+
+class RecipeRequest(BaseModel):
+    recipe_id: str
 
 
 class SpecializationRequest(BaseModel):
@@ -492,11 +548,37 @@ def sync_residents(db, city):
     for ordinal in range(count):
         if ordinal not in existing:
             name, race = citizen_identity(city["id"], ordinal)
-            db.execute("INSERT INTO residents (city_id,ordinal,name,race) VALUES (?,?,?,?)", (city["id"], ordinal, name, race))
+            word = new_alien_word()
+            db.execute("INSERT INTO residents (city_id,ordinal,name,race,alien_word) VALUES (?,?,?,?,?)", (city["id"], ordinal, name, race, word))
+            if ordinal >= 100:
+                learn_alien_word(db, city["id"], word)
 
 
 def resident_view(row):
-    return {"name": row["name"], "race": row["race"], "preferred_enemy": PREFERRED_ENEMY[row["race"]]}
+    return {"name": alien_name(row["name"], row["alien_word"]), "race": row["race"], "preferred_enemy": PREFERRED_ENEMY[row["race"]]}
+
+
+def service_allowance(city):
+    population = city["population"]
+    return {"care": max(1, population // 35), "craft": max(1, population // 40), "insight": max(1, population // 65)}
+
+
+def current_services(db, city, now):
+    period = now // 3600
+    row = db.execute("SELECT * FROM city_services WHERE city_id=?", (city["id"],)).fetchone()
+    if not row or row["period"] != period:
+        amounts = service_allowance(city)
+        db.execute("INSERT INTO city_services (city_id,period,care,craft,insight) VALUES (?,?,?,?,?) ON CONFLICT(city_id) DO UPDATE SET period=excluded.period,care=excluded.care,craft=excluded.craft,insight=excluded.insight", (city["id"], period, amounts["care"], amounts["craft"], amounts["insight"]))
+        return amounts
+    return {key: row[key] for key in SERVICES}
+
+
+def economy_view(db, city, now):
+    goods = {key: max(0, int(json.loads(city["goods"]).get(key, 0))) for key in GOODS}
+    services = current_services(db, city, now)
+    hourly = {"grain": max(1, city["population"] // 50), "timber": max(1, city["population"] // 80), "ore": max(1, city["population"] // 120)}
+    recipes = [dict(id=key, **recipe, available=all(goods.get(k, 0) >= v for k, v in recipe["goods"].items()) and all(services[k] >= v for k, v in recipe["services"].items()) and all(services[k] + v <= 99 for k, v in recipe.get("makes_services", {}).items()) and ("stat" not in recipe or city[recipe["stat"]] < STAT_LIMITS[recipe["stat"]][1])) for key, recipe in RECIPES.items()]
+    return {"goods": goods, "services": services, "per_hour": hourly, "next_services_at": (now // 3600 + 1) * 3600, "recipes": recipes}
 
 
 def city_bonuses(city, nodes=None):
@@ -538,8 +620,11 @@ def daily_tick(db, city, now):
             values[stat] = min(STAT_LIMITS[stat][1], values[stat] + whole)
             bank[stat] = 0 if values[stat] >= STAT_LIMITS[stat][1] else round(accrued - whole, 6)
         hourly_cash = round((.1 + .02 * city["wealth"] + bonuses["cash_flat"]) * (1 + .15 * levels.get("income", 0) + bonuses["cash_multiplier"]), 4)
-        db.execute("UPDATE cities SET cash=ROUND(cash+?,4),last_income=?,growth_bank=?,food=?,morale=?,tech=?,wealth=? WHERE id=?",
-                   (hourly_cash * income_hours, city["last_income"] + 3600 * income_hours, json.dumps(bank), values["food"], values["morale"], values["tech"], values["wealth"], city["id"]))
+        goods = json.loads(city["goods"])
+        for key, amount in (("grain", max(1, city["population"] // 50)), ("timber", max(1, city["population"] // 80)), ("ore", max(1, city["population"] // 120))):
+            goods[key] = min(9999, goods.get(key, 0) + amount * income_hours)
+        db.execute("UPDATE cities SET cash=ROUND(cash+?,4),last_income=?,growth_bank=?,goods=?,food=?,morale=?,tech=?,wealth=? WHERE id=?",
+                   (hourly_cash * income_hours, city["last_income"] + 3600 * income_hours, json.dumps(bank), json.dumps(goods), values["food"], values["morale"], values["tech"], values["wealth"], city["id"]))
         city = db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
     passed = min(365, max(0, (now - city["last_day"]) // DAY_SECONDS))
     if not passed:
@@ -820,11 +905,61 @@ def me(authorization: str | None = Header(None)):
         buildings = [building_view(row) for row in db.execute("SELECT * FROM city_buildings WHERE city_id=? ORDER BY built_at", (city["id"],))]
         building_offers = [building_offer_view(row) for row in db.execute("SELECT * FROM prepared_buildings WHERE city_id=? ORDER BY blueprint_id", (city["id"],))]
         next_offers_at = min((row["created_at"] for row in db.execute("SELECT created_at FROM chaos_offers WHERE city_id=?", (city["id"],))), default=int(time.time())) + OFFER_SECONDS
-        residents = [resident_view(row) for row in db.execute("SELECT name,race FROM residents WHERE city_id=? ORDER BY ordinal", (city["id"],))]
+        residents = [resident_view(row) for row in db.execute("SELECT name,race,alien_word FROM residents WHERE city_id=? ORDER BY ordinal", (city["id"],))]
         active = db.execute("SELECT * FROM research_queue WHERE city_id=?", (city["id"],)).fetchone()
         private_city = city_view(city, True)
         private_city.update(incoming_attacks_24h=incoming_attack_count(db, city["id"], int(time.time())), incoming_attack_limit=INCOMING_ATTACK_LIMIT)
-        return {"city": private_city, "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"])}
+        for hero in heroes:
+            hero["name"] = alien_name(hero["name"], hero["alien_word"])
+        known_words = {row["word"]: ALIEN_WORDS[row["word"]] for row in db.execute("SELECT word FROM alien_knowledge WHERE city_id=?", (city["id"],)) if row["word"] in ALIEN_WORDS}
+        return {"city": private_city, "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"]), "economy": economy_view(db, city, int(time.time())), "alien_words": known_words}
+
+
+@app.post("/api/economy/use")
+def use_recipe(data: RecipeRequest, authorization: str | None = Header(None)):
+    recipe = RECIPES.get(data.recipe_id)
+    if not recipe:
+        raise HTTPException(404, "Unknown recipe")
+    now = int(time.time())
+    with LOCK, database() as db:
+        city = daily_tick(db, auth(db, authorization), now)
+        services = current_services(db, city, now)
+        goods = {key: max(0, int(json.loads(city["goods"]).get(key, 0))) for key in GOODS}
+        if any(goods.get(key, 0) < amount for key, amount in recipe["goods"].items()) or any(services[key] < amount for key, amount in recipe["services"].items()):
+            raise HTTPException(409, "Not enough goods or current-hour services")
+        if "stat" in recipe and city[recipe["stat"]] >= STAT_LIMITS[recipe["stat"]][1]:
+            raise HTTPException(409, "That city stat is full")
+        if any(goods[key] + amount > 9999 for key, amount in recipe.get("makes", {}).items()):
+            raise HTTPException(409, "Goods storage is full")
+        if any(services[key] + amount > 99 for key, amount in recipe.get("makes_services", {}).items()):
+            raise HTTPException(409, "Too many services for this hour")
+        before_goods, before_services = goods.copy(), services.copy()
+        for key, amount in recipe["goods"].items():
+            goods[key] -= amount
+        for key, amount in recipe.get("makes", {}).items():
+            goods[key] += amount
+        for key, amount in recipe["services"].items():
+            services[key] -= amount
+        for key, amount in recipe.get("makes_services", {}).items():
+            services[key] += amount
+        db.execute("UPDATE city_services SET care=?,craft=?,insight=? WHERE city_id=?", (services["care"], services["craft"], services["insight"], city["id"]))
+        if "stat" in recipe:
+            stat = recipe["stat"]
+            after = min(STAT_LIMITS[stat][1], city[stat] + recipe["amount"])
+            db.execute(f"UPDATE cities SET goods=?,{stat}=? WHERE id=?", (json.dumps(goods), after, city["id"]))
+            changes = {"stats": {stat: change(city[stat], after)}}
+        else:
+            db.execute("UPDATE cities SET goods=? WHERE id=?", (json.dumps(goods), city["id"]))
+            changes = {"stats": {}}
+        changes["goods"] = {key: change(before_goods[key], goods[key]) for key in GOODS if before_goods[key] != goods[key]}
+        changes["services"] = {key: change(before_services[key], services[key]) for key in SERVICES if before_services[key] != services[key]}
+        title = recipe["name"]
+        story = f"The citizens of {city['name']} used today's services to {title.lower()}. The remaining services expire at the top of the hour."
+        log_id = str(uuid.uuid4())
+        db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (log_id, city["id"], city["id"], data.recipe_id, 1, story, "{}", now, "production", json.dumps(changes), title))
+        maybe_alien_log(db, log_id, city["id"])
+        updated = db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
+        return {"ok": True, "title": title, "story": story, "changes": changes, "economy": economy_view(db, updated, now)}
 
 
 def hall_state(db, city_id):
@@ -1019,6 +1154,8 @@ def hall_action(data: HallAction, authorization: str | None = Header(None)):
         with LOCK, database() as db:
             db.execute("UPDATE event_log SET title=?,story=? WHERE id=?", (title, story, log_id))
         result.update(title=title, story=story)
+    with LOCK, database() as db:
+        maybe_alien_log(db, log_id, city["id"], target["id"])
     return result
 
 
@@ -1155,8 +1292,10 @@ def accept_trade(offer_id: str, authorization: str | None = Header(None)):
         db.execute("UPDATE cities SET wealth=wealth+?-? WHERE id=?", (offer["offer_wealth"], offer["request_wealth"], target["id"]))
         if offer["offer_hero_id"]:
             db.execute("UPDATE heroes SET city_id=?,slot=NULL WHERE id=?", (target["id"], offer["offer_hero_id"]))
+            learn_alien_word(db, target["id"], next(hero["alien_word"] for hero in heroes if hero["id"] == offer["offer_hero_id"]))
         if offer["request_hero_id"]:
             db.execute("UPDATE heroes SET city_id=?,slot=NULL WHERE id=?", (sender["id"], offer["request_hero_id"]))
+            learn_alien_word(db, sender["id"], next(hero["alien_word"] for hero in heroes if hero["id"] == offer["request_hero_id"]))
         db.execute("UPDATE trade_offers SET status='accepted',resolved_at=? WHERE id=?", (now, offer_id))
         for hero in heroes:
             db.execute("UPDATE trade_offers SET status='expired',resolved_at=? WHERE status='pending' AND id<>? AND (offer_hero_id=? OR request_hero_id=?)", (now, offer_id, hero["id"], hero["id"]))
@@ -1174,6 +1313,7 @@ def accept_trade(offer_id: str, authorization: str | None = Header(None)):
     title, generated = trade_story(sender["name"], target["name"], pieces, story)
     with LOCK, database() as db:
         db.execute("UPDATE event_log SET title=?,story=? WHERE id=?", (title, generated, log_id))
+        maybe_alien_log(db, log_id, sender["id"], target["id"])
     return {"ok": True, "title": title, "story": generated, "changes": changes}
 
 
@@ -1263,7 +1403,7 @@ def drift_view(city):
 
 def offer_view(row):
     event = EVENT_BY_ID[row["template_id"]].copy()
-    event.update(id=row["id"], name=row["title"], tagline=row["tagline"])
+    event.update(id=row["id"], name=alien_name(row["title"], row["alien_word"]), tagline=row["tagline"])
     if row["bonus_stat"] in {"wealth", "food", "morale", "tech"}:
         event["effects"] = event["effects"].copy()
         event["effects"][row["bonus_stat"]] = event["effects"].get(row["bonus_stat"], 0) + (2 if event["kind"] == "self" else -2)
@@ -1357,7 +1497,7 @@ def fill_offers(city_id):
             trait_facet = item.get("trait_facet") if item.get("trait_facet") in FACETS else random.choice(FACETS)
             try:
                 db.execute("INSERT INTO used_content VALUES (?,?)", (content_hash, now))
-                db.execute("INSERT INTO chaos_offers (id,city_id,template_id,title,tagline,created_at,bonus_stat,trait_domain,trait_facet) VALUES (?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, template["id"], title, tagline, now, bonus_stat, trait_domain, trait_facet))
+                db.execute("INSERT INTO chaos_offers (id,city_id,template_id,title,tagline,created_at,bonus_stat,trait_domain,trait_facet,alien_word) VALUES (?,?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, template["id"], title, tagline, now, bonus_stat, trait_domain, trait_facet, new_alien_word()))
             except sqlite3.IntegrityError:
                 continue
 
@@ -1432,7 +1572,7 @@ def fill_prepared_heroes(city_id):
             content_hash = hashlib.sha256(("hero:" + name.casefold()).encode()).hexdigest()
             try:
                 db.execute("INSERT INTO used_content VALUES (?,?)", (content_hash, now))
-                db.execute("INSERT INTO prepared_heroes VALUES (?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, name, title, spec["tier"], spec["specialty"], now))
+                db.execute("INSERT INTO prepared_heroes (id,city_id,name,title,tier,specialty,created_at,alien_word) VALUES (?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, name, title, spec["tier"], spec["specialty"], now, new_alien_word()))
             except sqlite3.IntegrityError:
                 continue
 
@@ -1556,6 +1696,7 @@ def cast(data: Cast, authorization: str | None = Header(None)):
         target_traits[trait_name] = max(0, min(100, target_traits[trait_name] + (event["trait"] if success else 2)))
         db.execute("UPDATE cities SET tokens=tokens-?,shards=shards-?,cores=cores-? WHERE id=?", (event["cost"], event["shard_cost"], event["core_cost"], actor["id"]))
         db.execute("DELETE FROM chaos_offers WHERE id=?", (offer["id"],))
+        learned_word = offer["alien_word"] if learn_alien_word(db, actor["id"], offer["alien_word"]) else ""
         columns = ",".join(f"{key}=?" for key in changed)
         db.execute(f"UPDATE cities SET {columns}, traits=? WHERE id=?", (*changed.values(), json.dumps(target_traits), target_id))
         if event["kind"] == "attack":
@@ -1578,7 +1719,7 @@ def cast(data: Cast, authorization: str | None = Header(None)):
     generated = llm_story(event, actor["name"], target["name"], success, deltas, actor_traits, target_traits)
     with LOCK, database() as db:
         db.execute("UPDATE event_log SET story=? WHERE id=?", (generated, log_id))
-    return {"success": success, "story": generated, "changes": changes, "city": me(authorization)["city"]}
+    return {"success": success, "story": generated, "changes": changes, "learned_word": {learned_word: ALIEN_WORDS[learned_word]} if learned_word else {}, "city": me(authorization)["city"]}
 
 
 @app.post("/api/errands")
@@ -1674,7 +1815,9 @@ def construct_building(data: BuildRequest, authorization: str | None = Header(No
                    "wallet": {"wealth": change(city["wealth"], city["wealth"] - blueprint["cost"])},
                    "buildings": {offer["title"]: {"before": "planned", "after": "built", "delta": 1}}}
         story = f"I am {city['name']}. {offer['tagline']} The crew finished {offer['title']} and celebrated with a suspiciously tidy ribbon-cutting."
-        db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city["id"], city["id"], blueprint["id"], 1, story, json.dumps(blueprint["daily"]), now, "building", json.dumps(changes), f"Built {offer['title']}"))
+        log_id = str(uuid.uuid4())
+        db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (log_id, city["id"], city["id"], blueprint["id"], 1, story, json.dumps(blueprint["daily"]), now, "building", json.dumps(changes), f"Built {offer['title']}"))
+        maybe_alien_log(db, log_id, city["id"])
     return {"story": story, "changes": changes, "city": me(authorization)["city"]}
 
 
@@ -1808,6 +1951,7 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         if eligible_heroes and secrets.randbelow(100) < 30:
             stolen_hero = secrets.choice(eligible_heroes)
             db.execute("UPDATE heroes SET city_id=?,slot=NULL WHERE id=?", (winner["id"], stolen_hero["id"]))
+            learn_alien_word(db, winner["id"], stolen_hero["alien_word"])
             db.execute("UPDATE trade_offers SET status='expired',resolved_at=? WHERE status='pending' AND (offer_hero_id=? OR request_hero_id=?)", (now, stolen_hero["id"], stolen_hero["id"]))
         trait_names = secrets.SystemRandom().sample(selected, 3)
         attacker_changes, defender_changes = {}, {}
@@ -1839,6 +1983,7 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
     beats = narrative[2] if len(narrative) > 2 else []
     with LOCK, database() as db:
         db.execute("UPDATE event_log SET title=?,story=? WHERE id=?", (generated_title, generated, log_id))
+        maybe_alien_log(db, log_id, actor["id"], target["id"])
     return {"success": success, "title": generated_title, "story": generated, "beats": beats, "changes": changes, "sampled_traits": sampled, "moved": moved, "stolen_hero": stolen_hero["name"] if stolen_hero else None, "chance": chance, "city": me(authorization)["city"]}
 
 
@@ -1864,7 +2009,9 @@ def process_ambient_city(city_id):
         columns = ",".join(f"{key}=?" for key in values)
         db.execute(f"UPDATE cities SET {columns},shards=shards+?,cores=cores+?,last_ambient=? WHERE id=?", (*values.values(), shard_gain, core_gain, now, city_id))
         changes = {"target_city": city["name"], "wallet_city": city["name"], "stats": stat_changes, "traits": {}, "wallet": {"shards": change(city["shards"], city["shards"] + shard_gain), "cores": change(city["cores"], city["cores"] + core_gain)}}
-        db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, city_id, incident["id"], 1, story, json.dumps(incident["effects"]), now, "ambient", json.dumps(changes), title))
+        alien_word = new_alien_word()
+        learn_alien_word(db, city_id, alien_word)
+        db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, city_id, incident["id"], 1, story, json.dumps(incident["effects"]), now, "ambient", json.dumps(changes), alien_name(title, alien_word)))
         hero = db.execute("SELECT * FROM prepared_heroes WHERE city_id=? ORDER BY created_at LIMIT 1", (city_id,)).fetchone() if secrets.randbelow(100) < 16 else None
         if hero:
             db.execute("DELETE FROM prepared_heroes WHERE id=?", (hero["id"],))
@@ -1872,7 +2019,8 @@ def process_ambient_city(city_id):
             free_slot = next((slot for slot in range(city["hero_slots"]) if slot not in occupied), None)
             race = secrets.choice(RACES)
             ally_race = secrets.choice([item for item in RACES if item != race])
-            db.execute("INSERT INTO heroes (id,city_id,name,title,tier,specialty,slot,joined_at,race,ally_race) VALUES (?,?,?,?,?,?,?,?,?,?)", (hero["id"], city_id, hero["name"], hero["title"], hero["tier"], hero["specialty"], free_slot, now, race, ally_race))
+            db.execute("INSERT INTO heroes (id,city_id,name,title,tier,specialty,slot,joined_at,race,ally_race,alien_word) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (hero["id"], city_id, hero["name"], hero["title"], hero["tier"], hero["specialty"], free_slot, now, race, ally_race, hero["alien_word"]))
+            learn_alien_word(db, city_id, hero["alien_word"])
             hero_story = f"I am {city['name']}. {hero['name']}, my new {hero['title']}, arrived with a packed lunch and an alarming amount of confidence. They are now " + ("on my active team." if free_slot is not None else "waiting for an open team slot.")
             db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), city_id, city_id, "hero_join", 1, hero_story, "{}", now + 1, "hero", "{}", f"{RARITY_LABELS[hero['tier']]} citizen joins: {hero['name']}"))
     return True

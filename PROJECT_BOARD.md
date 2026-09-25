@@ -52,6 +52,11 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] A battle that transfers a special citizen immediately closes pending trade offers involving that citizen.
 - [x] Town Hall adds ten activities: weather, check-in streaks, daily goals, achievements, decrees, festivals, mystery crates, special citizen training, friendly gifts, and city rankings.
 - [x] Town Hall rewards, limits, offline weather effects, and cross-city gifts pass isolated rule checks.
+- [x] Twelve game pages fit a fixed two-row navigation on a phone without a horizontal scrollbar.
+- [x] Research shows visible start buttons, costs, prerequisites, and active countdowns in readable branch lists.
+- [x] Player-facing game text calls special people Heroes and describes buildings as permanent buffs.
+- [x] Citizens earn stored goods hourly and expiring care, craft, and insight services; recipes turn goods into other goods, services, and stat gains.
+- [x] Rare alien words appear on about 3% of new chaos choices, city incidents, and people; each city learns a word when it acquires the item or event.
 
 ## Verify and polish
 
@@ -67,6 +72,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 
 - [ ] Deploy to the owner's HTTPS server and invite friends.
 - [ ] Further battle art and effects after phone playtesting.
+- [ ] Sister city partnerships with small mutual buffs.
 
 ## Decisions still open
 

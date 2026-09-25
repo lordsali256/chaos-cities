@@ -1,6 +1,6 @@
 const app = document.getElementById('app');
 const byId = id => document.getElementById(id);
-const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const esc = value => String(value ?? '').replace(/\b(?:Zhaaru|Vektil|Qoruun|Nuvaxi|Threll|Ozzari|Kivora|Yeluun|Dravik|Suveth|Phaali|Wekora)\b/g, word => state?.alienWords?.[word] || word).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const rarityLabel = tier => ({white:'Common',green:'Uncommon',blue:'Rare',purple:'Epic',orange:'Legendary'})[tier] || 'Common';
 const REALITY_STAGES = ['Ordinary morning','A peculiar forecast','The sky is listening','Unlicensed moon','Suspicious weather','Buildings remember','Gravity takes lunch','The skyline wanders','Portal season','The city blinks','Parallel rush hour','Reality resigns'];
 const LANDSCAPES = ['Meadow','Farmland','Small Town','Garden City','Market Town','Harbor','Tech City','Dystopia','Dream City'];
@@ -25,7 +25,7 @@ const realityStage = weirdness => Math.max(0, Math.min(11, Math.floor((Number(we
 const state = {
   server: localStorage.getItem('chaos_server') || location.origin,
   key: localStorage.getItem('chaos_key') || '',
-  me: null, hall: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
+  me: null, hall: null, economy: null, alienWords: {}, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
   eventTab: 'self', logTab: 'all', traitsOpen: false, traitSearch: '', traitCategory: 'All', traitSort: 'high', groupTraits: localStorage.getItem('chaos_group_traits') !== 'false',
   setupMode: 'new', page: 'city', busy: false, selectedTech: 'city_charter', techBranch: 'Commerce',
   googleClientId: '',
@@ -93,7 +93,7 @@ function setup() {
     <header class="brand"><div class="logo"><div class="logo-mark">⚡</div>Chaos Cities</div><span class="pill">ONE CITY. INFINITE NONSENSE.</span></header>
     <div class="form-wrap"><span class="eyebrow">THE WORLD GETS WEIRDER</span>
       <h1>Build a city.<br>Break reality.</h1>
-      <p>Each player has one city, hourly Chaos Tokens, and a local AI that keeps inventing trouble even while you are away.</p>
+      <p>Each player has one city, hourly Chaos Tokens, and new city surprises even while you are away.</p>
       <label class="field">GAME SERVER ADDRESS<input class="input" id="server" type="url" placeholder="https://your-game.example.com" value="${esc(defaultUrl)}" required></label>
       <details id="key-login" open><summary>Enter with a city key</summary>
       <div class="setup-toggle"><button class="${state.setupMode === 'new' ? 'primary' : 'secondary'}" onclick="setSetupMode('new')">New city</button><button class="${state.setupMode === 'recover' ? 'primary' : 'secondary'}" onclick="setSetupMode('recover')">Return to mine</button></div>
@@ -188,14 +188,18 @@ async function refresh(quiet = false) {
   const hadCity = Boolean(state.me);
   try {
     const [mine, world, catalog, diplomacy, hall] = await Promise.all([api('/api/me'), api('/api/cities'), api('/api/catalog'), api('/api/trades'), api('/api/hall')]);
+    state.alienWords = mine.alien_words || {};
+    const translate = value => typeof value === 'string' ? value.replace(/\b(?:Zhaaru|Vektil|Qoruun|Nuvaxi|Threll|Ozzari|Kivora|Yeluun|Dravik|Suveth|Phaali|Wekora)\b/g, word => state.alienWords[word] || word) : value;
+    const translated = value => Array.isArray(value) ? value.map(translated) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, translated(item)])) : translate(value);
     state.me = mine.city;
     state.hall = hall;
+    state.economy = mine.economy;
     state.research = mine.research || null;
     state.dailyTagline = mine.daily_tagline || '';
     state.phoneServerUrl = mine.phone_server_url || '';
-    state.feed = mine.feed;
-    state.heroes = mine.heroes || [];
-    state.residents = mine.residents || [];
+    state.feed = translated(mine.feed);
+    state.heroes = translated(mine.heroes || []);
+    state.residents = translated(mine.residents || []);
     state.buildings = mine.buildings || [];
     state.buildingOffers = mine.building_offers || [];
     state.shop = mine.shop || [];
@@ -208,7 +212,7 @@ async function refresh(quiet = false) {
     state.battleRecords = world.battle_records || {};
     state.pairAttacks = world.pair_attacks || {};
     state.pairBattleLimit = world.pair_battle_limit || 2;
-    state.events = mine.events || [];
+    state.events = translated(mine.events || []);
     state.nextOffersAt = mine.next_offers_at || 0;
     render();
     if (quiet) window.scrollTo(0, scroll);
@@ -243,11 +247,11 @@ function eventCards() {
         <h3>${esc(item.name)}</h3><p>${esc(item.tagline)}</p>
         <div class="effect-preview">Base effects: ${Object.entries(item.effects).map(([name, value]) => name === 'weirdness' ? 'gradual weirdness' : `${numberDelta(value)} ${esc(name)}`).join(' · ')}<br>Trait: ${esc(item.trait_display)}</div>
         <div class="meta"><span class="cost">${walletCost(item)}</span><button class="cast" ${canAfford(item) ? '' : 'disabled'} onclick="chooseEvent('${item.id}')">${item.kind === 'self' ? 'Unleash' : 'Attack'} →</button></div>
-      </div></div>`).join('') || '<p class="empty">The city AI is preparing fresh choices. Check back in a moment.</p>';
+      </div></div>`).join('') || '<p class="empty">Fresh choices are on their way. Check back in a moment.</p>';
 }
 function errandCards() {
   const ready = Math.floor(Date.now() / 1000) >= state.me.next_errand_at;
-  return state.errands.map(item => `<div class="card desk-card"><div class="event-icon">${item.icon}</div><div class="card-main"><h3>${esc(item.name)}</h3><p>${esc(item.tagline)}</p><div class="effect-preview">${Object.entries(item.effects).map(([name, value]) => name === 'weirdness' ? 'gradual weirdness' : `${numberDelta(value)} ${esc(name)}`).join(' · ')}</div><div class="meta"><span class="cost">FREE CITY JOB</span><button class="cast" ${ready ? '' : 'disabled'} onclick="doErrand('${item.id}')">Do this →</button></div></div></div>`).join('') || '<p class="empty">The city AI is preparing fresh jobs. Check back in a moment.</p>';
+  return state.errands.map(item => `<div class="card desk-card"><div class="event-icon">${item.icon}</div><div class="card-main"><h3>${esc(item.name)}</h3><p>${esc(item.tagline)}</p><div class="effect-preview">${Object.entries(item.effects).map(([name, value]) => name === 'weirdness' ? 'gradual weirdness' : `${numberDelta(value)} ${esc(name)}`).join(' · ')}</div><div class="meta"><span class="cost">FREE CITY JOB</span><button class="cast" ${ready ? '' : 'disabled'} onclick="doErrand('${item.id}')">Do this →</button></div></div></div>`).join('') || '<p class="empty">Fresh jobs are on the way. Check back in a moment.</p>';
 }
 
 function changeSection(title, values) {
@@ -257,7 +261,7 @@ function changeSection(title, values) {
 }
 function changeRows(changes) {
   if (!changes || !Object.keys(changes).length) return '<p class="empty">Exact before-and-after numbers were not recorded for this older event.</p>';
-  return `<div class="changes">${changeSection(`${changes.target_city || 'City'} stats`, changes.stats)}${changeSection('Personality traits', changes.traits)}${changeSection(`${changes.attacker_city || 'Attacker'} traits`, changes.attacker_traits)}${changeSection(`${changes.defender_city || 'Defender'} traits`, changes.defender_traits)}${changeSection('Special citizens', changes.citizens)}${changeSection('Construction', changes.buildings)}${changeSection(`${changes.wallet_city || 'Mayor'} wallet`, changes.wallet)}${changeSection(`${changes.sender_name || 'Sender'} Wealth`, changes.sender_wallet)}${changeSection(`${changes.target_name || 'Receiver'} Wealth`, changes.target_wallet)}</div>`;
+  return `<div class="changes">${changeSection(`${changes.target_city || 'City'} stats`, changes.stats)}${changeSection('Stored goods', changes.goods)}${changeSection('This hour’s services', changes.services)}${changeSection('Personality traits', changes.traits)}${changeSection(`${changes.attacker_city || 'Attacker'} traits`, changes.attacker_traits)}${changeSection(`${changes.defender_city || 'Defender'} traits`, changes.defender_traits)}${changeSection('Heroes', changes.citizens)}${changeSection('Construction', changes.buildings)}${changeSection(`${changes.wallet_city || 'Mayor'} wallet`, changes.wallet)}${changeSection(`${changes.sender_name || 'Sender'} Wealth`, changes.sender_wallet)}${changeSection(`${changes.target_name || 'Receiver'} Wealth`, changes.target_wallet)}</div>`;
 }
 
 function battleSamples(samples, chance, changes = {}) {
@@ -267,13 +271,13 @@ function battleSamples(samples, chance, changes = {}) {
   const traitBuff = changes.hero_trait_bonus || {};
   const abilities = changes.hero_abilities || {};
   const abilityRows = [['Attacker', abilities.attacker || []], ['Defender', abilities.defender || []]].flatMap(([side, rows]) => rows.map(item => `<div class="duel-row"><span>${side}: ${esc(item.name)} · ${esc(item.ability)}</span><span>${item.power_bonus ? `+${item.power_bonus} team power` : ''}${item.power_bonus && item.trait_bonus ? ' · ' : ''}${item.trait_bonus ? `+${item.trait_bonus} trait power` : ''}${!item.power_bonus && !item.trait_bonus ? 'No skill boost this battle' : ''}</span></div>`)).join('');
-  return `<details class="battle-samples"><summary>See all ${samples.length} traits and fighters${Number.isFinite(chance) ? ` · attacker chance ${chance}%` : ''}</summary><div class="sample-heading"><span>Trait</span><span>Attacker</span><span>Defender</span></div>${samples.map(item => `<div class="sample-row"><span>${esc(item.name)}</span><b>${item.attacker}</b><b>${item.defender}</b></div>`).join('')}${duels.length ? `<h4>Resident race duels</h4><p>Preferred enemy match deals 2 damage instead of 1.</p>${duels.map(item => `<div class="duel-row"><span>${esc(item.attacker)} (${esc(item.attacker_race)}) <b>${item.attacker_damage}</b></span><span>${esc(item.defender)} (${esc(item.defender_race)}) <b>${item.defender_damage}</b></span></div>`).join('')}` : ''}<p>Equipped citizen team power: ${hero.attacker || 0} vs ${hero.defender || 0}. Trait bonuses: ${traitBuff.attacker || 0} vs ${traitBuff.defender || 0}.</p>${abilityRows ? `<h4>Special citizen abilities</h4>${abilityRows}` : ''}</details>`;
+  return `<details class="battle-samples"><summary>See all ${samples.length} traits and fighters${Number.isFinite(chance) ? ` · attacker chance ${chance}%` : ''}</summary><div class="sample-heading"><span>Trait</span><span>Attacker</span><span>Defender</span></div>${samples.map(item => `<div class="sample-row"><span>${esc(item.name)}</span><b>${item.attacker}</b><b>${item.defender}</b></div>`).join('')}${duels.length ? `<h4>Resident race duels</h4><p>Preferred enemy match deals 2 damage instead of 1.</p>${duels.map(item => `<div class="duel-row"><span>${esc(item.attacker)} (${esc(item.attacker_race)}) <b>${item.attacker_damage}</b></span><span>${esc(item.defender)} (${esc(item.defender_race)}) <b>${item.defender_damage}</b></span></div>`).join('')}` : ''}<p>Equipped citizen team power: ${hero.attacker || 0} vs ${hero.defender || 0}. Trait bonuses: ${traitBuff.attacker || 0} vs ${traitBuff.defender || 0}.</p>${abilityRows ? `<h4>Hero abilities</h4>${abilityRows}` : ''}</details>`;
 }
 
 function feedItems() {
   const filtered = state.feed.filter(item => state.logTab === 'all' || item.kind === state.logTab).slice(0,10);
-  if (!filtered.length) return '<p class="empty">No entries here yet. The city AI will have something to say soon.</p>';
-  return filtered.map(item => `<div class="feed-item"><div class="feed-icon">${item.kind === 'hero' ? '🧑‍🚀' : item.icon}</div><div class="feed-content"><div class="feed-title">${esc(item.event)} ${item.kind === 'battle' ? (item.success ? '· attacker won' : '· defender won') : item.success ? '' : '· misfired'} <span class="chip">${item.kind === 'ambient' ? 'CITY AI' : item.kind === 'hero' ? 'NEW CITIZEN' : item.kind === 'errand' ? 'PAST CITY JOB' : item.kind === 'building' ? 'CONSTRUCTION' : item.kind === 'battle' ? 'TRAIT BATTLE' : item.kind === 'trade' ? 'CITY TRADE' : 'PLAYER EVENT'}</span></div><div class="feed-story">${esc(item.story)}</div><div class="muted" style="margin-top:6px">${esc(item.actor)} → ${esc(item.target)} · ${new Date(item.created_at * 1000).toLocaleString()}</div>${item.kind === 'hero' ? '' : `<details class="change-details"><summary>See exact changes</summary>${changeRows(item.changes)}</details>`}${item.kind === 'battle' ? battleSamples(item.changes?.sampled_traits, item.changes?.win_chance, item.changes) : ''}</div></div>`).join('');
+  if (!filtered.length) return '<p class="empty">No entries here yet. Your city will have news soon.</p>';
+  return filtered.map(item => `<div class="feed-item"><div class="feed-icon">${item.kind === 'hero' ? '🧑‍🚀' : item.icon}</div><div class="feed-content"><div class="feed-title">${esc(item.event)} ${item.kind === 'battle' ? (item.success ? '· attacker won' : '· defender won') : item.success ? '' : '· misfired'} <span class="chip">${item.kind === 'ambient' ? 'CITY NEWS' : item.kind === 'hero' ? 'NEW HERO' : item.kind === 'errand' ? 'PAST CITY JOB' : item.kind === 'building' ? 'CONSTRUCTION' : item.kind === 'battle' ? 'TRAIT BATTLE' : item.kind === 'trade' ? 'CITY TRADE' : item.kind === 'production' ? 'WORKSHOP' : 'PLAYER EVENT'}</span></div><div class="feed-story">${esc(item.story)}</div><div class="muted" style="margin-top:6px">${esc(item.actor)} → ${esc(item.target)} · ${new Date(item.created_at * 1000).toLocaleString()}</div>${item.kind === 'hero' ? '' : `<details class="change-details"><summary>See exact changes</summary>${changeRows(item.changes)}</details>`}${item.kind === 'battle' ? battleSamples(item.changes?.sampled_traits, item.changes?.win_chance, item.changes) : ''}</div></div>`).join('');
 }
 function featuredEvent() {
   const rewards = state.feed.map(item => {
@@ -281,8 +285,8 @@ function featuredEvent() {
     const sections = ['stats', 'traits', 'wallet'];
     if (item.kind === 'battle') sections.push(item.success ? 'attacker_traits' : 'defender_traits');
     const gains = sections.flatMap(section => Object.entries(changes[section] || {}).filter(([, value]) => Number(value?.delta) > 0).map(([name,value]) => ({name, amount:Number(value.delta)})));
-    if (changes.citizens && Object.values(changes.citizens).some(value => value.after === state.me.name)) gains.push({name:'special citizen',amount:10});
-    const score = gains.reduce((sum, gain) => sum + gain.amount * (['shards','cores','special citizen'].includes(gain.name) ? 10 : 1), 0);
+    if (changes.citizens && Object.values(changes.citizens).some(value => value.after === state.me.name)) gains.push({name:'hero',amount:10});
+    const score = gains.reduce((sum, gain) => sum + gain.amount * (['shards','cores','hero'].includes(gain.name) ? 10 : 1), 0);
     return {item,gains,score};
   }).filter(entry => entry.score > 0).sort((a,b) => b.score-a.score)[0];
   if (!rewards) return '';
@@ -303,7 +307,7 @@ function traitRows() {
 function heroCards() {
   return Array.from({length: state.me.hero_slots}, (_, slot) => {
     const hero = state.heroes.find(item => item.slot === slot);
-    return `<div class="hero-card ${hero ? 'tier-' + esc(hero.tier) : 'empty-slot'}"><span class="rarity">SLOT ${slot+1}${hero ? ' · ' + rarityLabel(hero.tier).toUpperCase() : ''}</span><h3>${hero ? esc(hero.name) : 'Vacant hero chair'}</h3><p>${hero ? esc(hero.title) : 'Waiting for an extraordinary citizen.'}</p>${hero ? `<span class="muted">${esc(hero.race)} · +${1 + ['white','green','blue','purple','orange'].indexOf(hero.tier)} ${esc(hero.specialty)} each city day · Training ${hero.training || 0}/5 · Battle power and defense · Ally: ${esc(hero.ally_race)}<br><b>${esc(hero.ability?.effect || '')}</b></span>` : ''}<button class="secondary" onclick="showRoster(${slot})">${hero ? 'Change citizen' : 'Choose citizen'}</button></div>`;
+    return `<div class="hero-card ${hero ? 'tier-' + esc(hero.tier) : 'empty-slot'}"><span class="rarity">SLOT ${slot+1}${hero ? ' · ' + rarityLabel(hero.tier).toUpperCase() : ''}</span><h3>${hero ? esc(hero.name) : 'Vacant hero chair'}</h3><p>${hero ? esc(hero.title) : 'Waiting for an extraordinary citizen.'}</p>${hero ? `<span class="muted">${esc(hero.race)} · +${1 + ['white','green','blue','purple','orange'].indexOf(hero.tier)} ${esc(hero.specialty)} each city day · Training ${hero.training || 0}/5 · Battle power and defense · Ally: ${esc(hero.ally_race)}<br><b>${esc(hero.ability?.effect || '')}</b></span>` : ''}<button class="secondary" onclick="showRoster(${slot})">${hero ? 'Change hero' : 'Choose hero'}</button></div>`;
   }).join('');
 }
 
@@ -321,13 +325,33 @@ function techTreeView() {
   const visible = state.techTree.filter(node => node.branch === state.techBranch || node.id === 'city_charter').sort((a,b) => a.y-b.y || a.x-b.x);
   const nodes = visible.map(node => {
     const owned = known.has(node.id), researching = state.research?.node_id === node.id;
-    const ready = !state.research && node.requires.every(id => known.has(id)) && state.me.tech >= node.tech && state.me.cash >= node.cost;
-    const status = researching ? 'Researching' : owned ? 'Researched' : ready ? 'Ready to research' : 'Locked';
+    const missing = node.requires.filter(id => !known.has(id)).map(id => lookup[id]?.name || id);
+    const ready = !state.research && !owned && !missing.length && state.me.tech >= node.tech && state.me.cash >= node.cost;
+    const status = researching ? 'Researching' : owned ? 'Completed' : ready ? 'Ready now' : missing.length ? `First complete: ${missing.join(', ')}` : state.me.tech < node.tech ? `Need ${node.tech} Tech` : state.me.cash < node.cost ? `Need ${node.cost} Cash` : 'Finish current research';
     const requirements = node.requires.map(id => lookup[id]?.name || id).join(', ') || 'None';
-    return `<div class="tech-lane-row"><button class="tech-dot ${esc(node.branch.toLowerCase())} ${owned ? 'owned' : ready ? 'ready' : 'locked'} ${researching ? 'researching' : ''}" aria-label="${esc(node.name)}: ${esc(node.effect)}. ${status}" onclick="showTechNode('${node.id}')"><span class="dot-core"></span><span class="tech-tooltip"><b>${esc(node.name)}</b><small>Tech ${node.tech} · 💵 ${node.cost} Cash</small><span>${esc(node.effect)}</span><small>Needs: ${esc(requirements)}</small><em>${status}${researching ? ` · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span>` : ''}</em>${researching ? `<span class="mini-progress"><i data-research-progress style="width:${researchPercent()}%"></i></span>` : ''}</span></button><div class="tech-lane-label"><strong>${esc(node.name)}</strong><small>${esc(node.effect)}</small><span>${status}${researching ? ` · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span>` : ''}</span></div></div>`;
+    return `<div class="research-row ${owned ? 'owned' : ready ? 'ready' : 'locked'}"><span class="research-marker" aria-hidden="true">${owned ? '✓' : researching ? '◉' : '•'}</span><div class="research-info"><strong>${esc(node.name)}</strong><span>${esc(node.effect)}</span><small>Requires: ${esc(requirements)} · Tech ${node.tech} · ${node.cost} Cash</small><em>${esc(status)}</em>${researching ? `<div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div><small>Done in <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span></small>` : ''}</div><button class="cast" ${ready ? '' : 'disabled'} onclick="researchNode('${node.id}')">${ready ? 'Start research' : researching ? 'In progress' : owned ? 'Done' : 'Locked'}</button></div>`;
   }).join('');
-  return `<div class="tree-legend"><span>● Researched</span><span>◉ Available</span><span>○ Locked</span><span>${known.size} / ${state.techTree.length} nodes</span></div><div class="tree-jumps">${['Commerce','Science','Food','Culture','Construction'].map(branch => `<button class="secondary ${state.techBranch === branch ? 'selected' : ''}" onclick="jumpTech('${branch}')">${branch}</button>`).join('')}</div><p class="progress-note">Pick a branch, then tap a dot for its requirements and timer. Completed dots unlock connected research.</p>${state.research ? `<div class="surface research-active"><b>🔬 Researching ${esc(lookup[state.research.node_id]?.name || state.research.node_id)}</b><span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span><div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div></div>` : ''}<div class="tech-lane">${nodes}</div><div class="surface tech-inspector" id="tech-inspector"></div>`;
+  return `<p class="progress-note">Start with <b>Officially a City</b> in Commerce. Select a branch, then press <b>Start research</b> on a ready item. Completed research unlocks the next items.</p><div class="tree-legend"><span>${known.size} / ${state.techTree.length} complete</span><span>🟢 Ready</span><span>○ Locked</span></div><div class="tree-jumps">${['Commerce','Science','Food','Culture','Construction'].map(branch => `<button class="secondary ${state.techBranch === branch ? 'selected' : ''}" onclick="jumpTech('${branch}')">${branch}</button>`).join('')}</div>${state.research ? `<div class="surface research-active"><b>🔬 Researching ${esc(lookup[state.research.node_id]?.name || state.research.node_id)}</b><span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span><div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div></div>` : ''}<div class="research-list">${nodes}</div>`;
 }
+
+function economyView() {
+  const economy = state.economy;
+  if (!economy) return '<p>Inventory is loading.</p>';
+  const goods = Object.entries(economy.goods).map(([name, amount]) => `<div class="economy-item"><strong>${esc(name)}</strong><b>${amount}</b><small>${economy.per_hour[name] ? `+${economy.per_hour[name]} each hour` : 'Stored until used'}</small></div>`).join('');
+  const services = Object.entries(economy.services).map(([name, amount]) => `<div class="economy-item service"><strong>${esc(name)}</strong><b>${amount}</b><small>Expires this hour</small></div>`).join('');
+  const recipes = economy.recipes.map(item => {
+    const inputs = [...Object.entries(item.goods).map(([name, amount]) => `${amount} ${name}`), ...Object.entries(item.services).map(([name, amount]) => `${amount} ${name} service`)].join(' + ');
+    const output = item.makes ? Object.entries(item.makes).map(([name, amount]) => `${amount} ${name}`).join(', ') : item.makes_services ? Object.entries(item.makes_services).map(([name, amount]) => `${amount} ${name} service`).join(', ') : `+${item.amount} ${item.stat}`;
+    return `<div class="research-row"><div class="research-info"><strong>${esc(item.name)}</strong><small>Uses ${esc(inputs)}</small><span>Makes ${esc(output)}</span></div><button class="cast" ${item.available ? '' : 'disabled'} onclick="useRecipe('${item.id}')">Make</button></div>`;
+  }).join('');
+  const learned = Object.entries(state.alienWords).map(([word, meaning]) => `<span class="chip">${word} = ${esc(meaning)}</span>`).join(' ');
+  return `<div class="section-head"><div><h2>Goods & services</h2><p>Citizens produce grain, timber, and ore every hour. Stored goods can become new goods or city improvements.</p></div></div><h3>Stored goods</h3><div class="economy-grid">${goods}</div><h3>Services available now</h3><p class="progress-note">Citizens produce care, craft, and insight each hour. Use them before <span data-countdown="${economy.next_services_at}">${clock(economy.next_services_at)}</span>; unused services disappear when the next hour starts.</p><div class="economy-grid">${services}</div><h3>Make something</h3><div class="research-list">${recipes}</div><details class="surface alien-dictionary"><summary>Alien words learned: ${Object.keys(state.alienWords).length}</summary><p>Acquire an unfamiliar event or person to learn one word. Learned words appear in English throughout your city.</p>${learned || '<p>No words learned yet.</p>'}</details>`;
+}
+
+window.useRecipe = async id => {
+  try { const result = await api('/api/economy/use', {method:'POST', body:JSON.stringify({recipe_id:id})}); await refresh(true); toast(result.title + ' complete'); }
+  catch (error) { toast(error.message); }
+};
 
 function buildingPerk(item) {
   const bonuses = Object.entries(item.daily || {}).map(([name, amount]) => `+${amount} ${name} each city day`);
@@ -349,7 +373,7 @@ function buildingCards() {
   const slotsFull = state.buildings.length >= state.me.building_slots;
   const built = state.buildings.map(item => `<div class="card building-card built"><div class="event-icon">${item.icon}</div><div class="card-main"><span class="chip">BUILT</span><h3>${esc(item.name)}</h3><p>${esc(item.description)}</p><div class="effect-preview">${esc(buildingPerk(item))}</div></div></div>`).join('');
   const plans = state.buildingOffers.map(item => `<div class="card building-card"><div class="event-icon">${item.icon}</div><div class="card-main"><h3>${esc(item.name)}</h3><p>${esc(item.description)}</p><div class="effect-preview">${esc(buildingPerk(item))}</div><div class="meta"><span class="cost">💰 ${item.cost} Wealth</span><button class="cast" ${slotsFull || state.me.wealth < item.cost ? 'disabled' : ''} onclick="buildCity('${item.id}')">Construct →</button></div></div></div>`).join('');
-  return built + plans || '<p class="empty">The city AI is sketching building plans.</p>';
+  return built + plans || '<p class="empty">New building plans are on the way.</p>';
 }
 
 function hallView() {
@@ -369,7 +393,7 @@ function hallView() {
       <section class="surface hall-card"><h3>📜 Mayor decree</h3><p>Pick one daily rule for 3 Cash. Each adds up to 3 points now.</p><div class="hall-actions">${[['pantry','🥫 Pantry Patrol'],['parade','😊 Tiny Parade'],['market','💰 Pocket Change']].map(([id,label]) => `<button class="secondary" ${!hall.decree_available || state.me.cash < 3 ? 'disabled' : ''} onclick="hallAction('decree',{choice:'${id}'})">${label}</button>`).join('')}</div></section>
       <section class="surface hall-card"><h3>🎉 City festival</h3><p>Spend 10 Cash for up to 5 Morale and a new citizen if Food is plentiful.</p>${ready(hall.festival_available,state.me.cash >= 10,'Host festival · 10 Cash','festival','Need 10 Cash')}</section>
       <section class="surface hall-card"><h3>📦 Mystery crate</h3><p>Spend one Shard for a surprise: Cash, resources, or a rare Core.</p>${ready(hall.crate_available,state.me.shards >= 1,'Open crate · 1 Shard','crate','Need 1 Shard')}</section>
-      <section class="surface hall-card"><h3>🥊 Citizen training</h3><p>Train one special citizen per day. Each level adds one battle team power while equipped, up to level 5.</p><select id="hall-hero" aria-label="Citizen to train">${hall.hero_training.map(hero => `<option value="${esc(hero.id)}" ${hero.level >= 5 ? 'disabled' : ''}>${esc(hero.name)} · level ${hero.level}/5 · ${hero.cost} Cash</option>`).join('')}</select><button class="cast" ${!hall.training_available || !hall.hero_training.some(hero => hero.level < 5 && state.me.cash >= hero.cost) ? 'disabled' : ''} onclick="hallAction('train',{hero_id:byId('hall-hero').value})">Train citizen</button></section>
+      <section class="surface hall-card"><h3>🥊 Hero training</h3><p>Train one hero per day. Each level adds one battle team power while equipped, up to level 5.</p><select id="hall-hero" aria-label="Citizen to train">${hall.hero_training.map(hero => `<option value="${esc(hero.id)}" ${hero.level >= 5 ? 'disabled' : ''}>${esc(hero.name)} · level ${hero.level}/5 · ${hero.cost} Cash</option>`).join('')}</select><button class="cast" ${!hall.training_available || !hall.hero_training.some(hero => hero.level < 5 && state.me.cash >= hero.cost) ? 'disabled' : ''} onclick="hallAction('train',{hero_id:byId('hall-hero').value})">Train hero</button></section>
       <section class="surface hall-card"><h3>🎁 Friendly gift</h3><p>Send a rival city +2 Morale, or +2 Food if Morale is full, for 2 Wealth once each day.</p><select id="hall-rival" aria-label="City to receive a gift">${rivals.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="cast" ${!hall.gift_available || !rivals.length || state.me.wealth < 2 ? 'disabled' : ''} onclick="hallAction('gift',{target_city_id:byId('hall-rival').value})">Send casserole</button></section>
       <section class="surface hall-card"><h3>🏆 City rankings</h3><p>Your rank: ${hall.my_rank || '—'}. Population breaks ties with Tech.</p>${leaders}</section>
     </div>`;
@@ -387,9 +411,11 @@ function tradeCards() {
 
 function glossaryView() {
   const sections = [
-    ['Getting started', 'Your mayor owns one city. Start with City to see your supplies, choose a specialization, and watch your city grow. Visit Town Hall for daily actions and rewards. Use Chaos Tokens in Chaos for events. Visit Research when you have Cash and enough Tech. Citizens holds your equipped special people. Battles and Trades connect your city to other mayors.'],
+    ['Getting started', 'Your mayor owns one city. Start with City to see your supplies. Town Hall has daily rewards. Chaos uses hourly tokens for events. Goods stores what citizens produce. In Research, open Commerce and press Start research on City Charter. Heroes holds your equipped team. Battles and Trades connect you to other mayors.'],
     ['Town Hall', 'Weather changes daily Food and Morale, even while you are away. Check in for Cash and grow a daily streak. Complete three rotating goals, claim permanent achievements, choose one decree, host a festival, open a Shard crate, train a citizen, or send one friendly gift each day. City rankings compare population first, then Tech. The server enforces all costs and limits.'],
-    ['Citizens', 'The population living in your city. Food shortages can make it shrink; good morale helps it grow. Special citizens are named heroes in limited equipment slots.'],
+    ['Citizens', 'The population living in your city. Food shortages can make it shrink; good morale helps it grow. Citizens produce goods and services each hour. Heroes are individual characters you can equip in limited slots.'],
+    ['Goods and services', 'Goods stay in your city inventory until used. Citizens produce grain, timber, and ore hourly. Recipes turn these into planks, tools, and meals, or city stat boosts. Care, craft, and insight are services: they can power recipes only during the current hour. Unused services disappear when the next hour begins.'],
+    ['Alien words', 'About 3% of new events and people may carry a word from an unfamiliar language. When you play that event or acquire that person, your city learns the word. From then on, that word appears in English for your city.'],
     ['Wealth', 'A city resource used to build special buildings and start battles. Each point also produces 0.02 Cash per hour. Wealth and Cash are separate.'],
     ['Cash', 'Money earned each hour from base income, Wealth, research, and upgrades. Spend Cash on research nodes, shop upgrades, and some class changes.'],
     ['Food', 'Your city eats this. A shortage reduces the population. Tech, buildings, events, and upgrades can help food production.'],
@@ -399,10 +425,10 @@ function glossaryView() {
     ['Anomaly Shards and Reality Cores', 'Rare currencies earned from city incidents. Higher weirdness unlocks more powerful events that may use them.'],
     ['Weirdness and reality drift', 'The city’s unusual side unfolds across 90 real days. The progress bar shows when its next level can unlock. Its skyline and colors move through one of 72 visual paths.'],
     ['Traits', 'Your city has 320 individual personality scores in ten groups. Search and sort them in Traits. Battles randomly sample twenty, so a younger city can challenge an older one.'],
-    ['Research and upgrades', 'Research follows connected dots. Tap a dot to see requirements and its exact effect. Shop upgrades spend Cash and can raise hourly growth or add citizen and building slots.'],
-    ['Special citizens and buildings', 'Events can bring in special citizens. Only equipped citizens provide daily stat bonuses, matching trait bonuses in battle, team power, and defense. Each also has one stable ability: Guard helps defense, Rally buffs other equipped citizens, or Focus strengthens sampled traits in their specialty. Their locally generated title names that ability. An ally race in the fight adds a team bonus. Each city starts with one citizen slot and one building plot; the shop can unlock more.'],
-    ['Battles', 'A challenge costs Wealth. Twenty random traits and five resident race duels affect the odds, limited to 35–65%. A resident deals double damage to their preferred enemy race. The winner moves a few trait points and sometimes recruits one of the loser’s special citizens. Buildings and city specialization may add defense. A city can receive six hostile events in 24 hours, counting both battles and Chaos Token attacks.'],
-    ['Trades', 'Offer Wealth or a special citizen to another mayor. They must accept before anything moves. Offers expire after 48 hours. You can send ten proposals per 24 hours, at most four to one rival; canceled offers still count.'],
+    ['Research and upgrades', 'Open the Commerce branch and press Start research on Officially a City first. Each row shows its earlier requirements, Tech score, Cash cost, and effect. One project runs at a time; its progress bar and timer appear in the row. Shop upgrades spend Cash and can increase growth or add hero and building slots.'],
+    ['Heroes and buildings', 'Events can bring in Heroes. Only equipped Heroes provide daily stat bonuses, battle power, and defense. Guard helps defense, Rally buffs other equipped Heroes, and Focus strengthens sampled traits. An ally race in the fight adds a team bonus. Buildings are permanent buffs: their daily stat or defense bonuses continue after construction. Each city starts with one hero slot and one building plot.'],
+    ['Battles', 'A challenge costs Wealth. Twenty random traits and five resident race duels affect the odds, limited to 35–65%. A resident deals double damage to their preferred enemy race. The winner moves a few trait points and sometimes recruits one of the loser’s heroes. Buildings and city specialization may add defense. A city can receive six hostile events in 24 hours, counting both battles and Chaos Token attacks.'],
+    ['Trades', 'Offer Wealth or a hero to another mayor. They must accept before anything moves. Offers expire after 48 hours. You can send ten proposals per 24 hours, at most four to one rival; canceled offers still count.'],
   ];
   return `<div class="section-head"><div><h2>Getting started & glossary</h2><p>A plain language guide to the city and its rules.</p></div></div><div class="glossary-list">${sections.map(([title,body],index) => `<details class="surface" ${index===0 ? 'open' : ''}><summary>${esc(title)}</summary><p>${esc(body)}</p></details>`).join('')}</div>`;
 }
@@ -415,7 +441,7 @@ function render() {
   const rivals = state.cities.filter(item => item.id !== city.id);
   app.innerHTML = `<div class="shell">
     <header class="brand"><div class="logo"><div class="logo-mark">⚡</div>Chaos Cities</div><span class="pill">THE CITY IS LISTENING</span></header>
-    <nav class="main-nav" aria-label="Game pages">${[['city','🏙️ City'],['hall','🏛️ Town Hall'],['chaos','✨ Chaos'],['citizens','🧑‍🚀 Citizens'],['build','🏗️ Buildings'],['research','🧬 Research'],['battles','⚔️ Battles'],['trades','🤝 Trades'],['log','📜 Log'],['traits','🗂️ Traits'],['glossary','📖 Help']].map(([id,label]) => `<button class="tab ${state.page === id ? 'active' : ''}" onclick="setPage('${id}')">${label}</button>`).join('')}</nav>
+    <nav class="main-nav" aria-label="Game pages">${[['city','🏙️ City'],['hall','🏛️ Town Hall'],['chaos','✨ Chaos'],['citizens','🦸 Heroes'],['economy','📦 Goods'],['build','🏗️ Buildings'],['research','🧬 Research'],['battles','⚔️ Battles'],['trades','🤝 Trades'],['log','📜 Log'],['traits','🗂️ Traits'],['glossary','📖 Help']].map(([id,label]) => `<button class="tab ${state.page === id ? 'active' : ''}" onclick="setPage('${id}')">${label}</button>`).join('')}</nav>
     <div class="quick-stats" aria-label="City resources">${[['👥','Citizens',city.population],['💰','Wealth',city.wealth],['🥫','Food',city.food],['😊','Morale',city.morale],['🛸','Tech',city.tech]].map(([icon,label,value]) => `<div title="${label}"><span>${icon} ${label}</span><strong>${value}</strong></div>`).join('')}</div>
     ${state.page === 'city' ? `
     <section class="hero"><div class="city-scene" aria-hidden="true"><div class="scene-sun"></div><div class="scene-cloud"></div><div class="scene-portal"></div><div class="scene-ground"></div><div class="scene-building one"></div><div class="scene-building two"></div><div class="scene-building three"></div><div class="scene-eye"></div></div><span class="eyebrow">${esc(city.owner_name)}'S GLORIOUS DISASTER</span><h1>${esc(city.name)}</h1><p>${esc(state.dailyTagline)}</p><button class="secondary rename-button" onclick="renameCity()">Rename city</button><span class="reality-label">${esc(pathName)} · Skyline ${stage + 1}/12 · ${esc(REALITY_STAGES[stage])}</span></section>
@@ -423,8 +449,8 @@ function render() {
     <div class="currency-grid">
       <div class="wallet"><span>✦ CHAOS TOKENS</span><strong>${city.tokens}<small> / ${city.max_tokens}</small></strong><p>+1 each hour · next in <span data-countdown="${city.next_tokens_at}">${clock(city.next_tokens_at)}</span></p></div>
       <div class="wallet cash"><span>💵 CASH</span><strong>${city.cash.toFixed(2)}</strong><p>+${city.cash_per_hour.toFixed(3)} each hour from base income and Wealth</p></div>
-      <div class="wallet shard"><span>◆ ANOMALY SHARDS</span><strong>${city.shards}</strong><p>Rare City AI incidents</p></div>
-      <div class="wallet core"><span>◈ REALITY CORES</span><strong>${city.cores}</strong><p>Very rare later City AI incidents</p></div>
+      <div class="wallet shard"><span>◆ ANOMALY SHARDS</span><strong>${city.shards}</strong><p>Rare city incidents</p></div>
+      <div class="wallet core"><span>◈ REALITY CORES</span><strong>${city.cores}</strong><p>Very rare city incidents</p></div>
     </div>
     <div class="grid">${stat('👥','Citizens',city.population,'Can grow or shrink')}${stat('💰','Wealth',city.wealth,'City funds')}${stat('🥫','Food',city.food,'Feeds citizens')}${stat('😊','Morale',city.morale,'Out of 100')}${stat('🛸','Tech',city.tech,'Boosts food')}${stat('🌀','Weirdness',city.weirdness,'Current reality drift')}${stat('🧬','Traits',320,'All distinct')}${stat('🏙️','Rivals',rivals.length,'Cities in range')}</div>
     <details class="surface stat-guide"><summary>What do my city stats do?</summary><div class="guide-grid"><p><b>🥫 Food</b> feeds citizens. A shortage shrinks the population.</p><p><b>😊 Morale</b> helps population grow and reflects daily city life.</p><p><b>💰 Wealth</b> earns Cash at 0.02 per Wealth each hour and also pays for construction and battles.</p><p><b>🛸 Tech</b> unlocks upgrades and branches of the tech tree. It also adds daily Food.</p></div></details>
@@ -436,23 +462,24 @@ function render() {
     <div class="surface"><div class="drift-top"><strong>Weirdness ${city.weirdness} / ${city.drift.cap} available now</strong><span>Next increase in <span data-countdown="${city.drift.next_ramp_at}">${clock(city.drift.next_ramp_at)}</span></span></div><div class="progress"><i style="width:${city.drift.progress}%"></i></div><p class="progress-note">${city.drift.progress}% of the 90-day journey · Full chaos ${new Date(city.drift.full_ramp_at * 1000).toLocaleDateString()}</p></div>
     ` : ''}
     ${state.page === 'hall' ? hallView() : ''}
+    ${state.page === 'economy' ? economyView() : ''}
     ${state.page === 'chaos' ? `
-    <div class="section-head"><div><h2>The chaos menu</h2><p>Your local AI prepares one-use choices. Used choices disappear and fresh ones arrive soon. Full refresh in <span data-countdown="${state.nextOffersAt}">${clock(state.nextOffersAt)}</span>.</p></div><div class="tabs"><button class="tab ${state.eventTab === 'self' ? 'active' : ''}" onclick="setEventTab('self')">✨ My city</button><button class="tab ${state.eventTab === 'attack' ? 'active' : ''}" onclick="setEventTab('attack')">💥 Attack</button></div></div>
+    <div class="section-head"><div><h2>The chaos menu</h2><p>One-use choices rotate after they are played. Full refresh in <span data-countdown="${state.nextOffersAt}">${clock(state.nextOffersAt)}</span>.</p></div><div class="tabs"><button class="tab ${state.eventTab === 'self' ? 'active' : ''}" onclick="setEventTab('self')">✨ My city</button><button class="tab ${state.eventTab === 'attack' ? 'active' : ''}" onclick="setEventTab('attack')">💥 Attack</button></div></div>
     <div class="cards">${eventCards()}</div>
     ` : ''}
     ${state.page === 'citizens' ? `
-    <div class="section-head"><div><h2>Special citizens</h2><p>Heroes arrive through city events. Equip up to ${city.hero_slots}; only equipped heroes give daily bonuses.</p></div><span class="chip">${state.heroes.filter(hero => hero.slot !== null).length} / ${city.hero_slots} SLOTS</span></div>
+    <div class="section-head"><div><h2>Heroes</h2><p>Heroes arrive through city events. Equip up to ${city.hero_slots}; only equipped heroes give daily bonuses.</p></div><span class="chip">${state.heroes.filter(hero => hero.slot !== null).length} / ${city.hero_slots} SLOTS</span></div>
     <div class="hero-roster">${heroCards()}</div>
     <p class="progress-note">${state.heroes.filter(hero => hero.slot === null).length} citizens in reserve. ${city.hero_slots < 3 ? 'Buy more chairs in Research.' : 'All hero chairs unlocked.'}</p><button class="secondary" onclick="showRoster()">Manage all citizens</button>
     <details class="surface residents-list"><summary>Meet all ${state.residents.length} residents</summary><p>Each resident has a race and a preferred enemy. In battle, a matching opponent takes double damage. An equipped hero gains an ally bonus when their ally race joins the fight.</p><div class="resident-grid">${state.residents.map(person => `<div><b>${esc(person.name)}</b><small>${esc(person.race)} · beats ${esc(person.preferred_enemy)}</small></div>`).join('')}</div></details>
     ` : ''}
     ${state.page === 'build' ? `
-    <div class="section-head"><div><h2>Special buildings</h2><p>Spend Wealth to shape your city's daily life. The local AI gives each plan its own identity.</p></div><span class="chip">${state.buildings.length} / ${city.building_slots} BUILT</span></div>
+    <div class="section-head"><div><h2>Buildings</h2><p>Buildings provide permanent buffs to your city. Spend Wealth to build each unique design once.</p></div><span class="chip">${state.buildings.length} / ${city.building_slots} BUILT</span></div>
     <div class="cards building-list">${buildingCards()}</div>
     <p class="progress-note">Every city starts with one plot. Buy more through the Research shop.</p>
     ` : ''}
     ${state.page === 'research' ? `
-    <div class="section-head"><div><h2>The ridiculous tech tree</h2><p>Explore ${state.techTree.length} connected research dots. Your Tech score opens paths; Cash pays for them.</p></div><span class="chip">🛸 ${city.tech} Tech · 💵 ${city.cash.toFixed(2)} Cash</span></div>
+    <div class="section-head"><div><h2>Research</h2><p>Choose a branch and press Start research on an available discovery. Tech opens it; Cash pays for it.</p></div><span class="chip">🛸 ${city.tech} Tech · 💵 ${city.cash.toFixed(2)} Cash</span></div>
     ${techTreeView()}
     <div class="section-head"><div><h2>Upgrade shop</h2><p>Cash comes from Wealth every hour. Upgrades increase passive growth or buy more slots.</p></div></div>
     <div class="cards">${shopCards()}</div>
@@ -460,7 +487,7 @@ function render() {
     ${state.page === 'battles' ? `
     <div class="section-head"><div><h2>Other cities</h2><p>Friends on this server can send chaos back. Battle records cover the last 30 days.</p></div><span class="chip">Your record: ${state.battleRecords[city.id]?.wins || 0} W · ${state.battleRecords[city.id]?.losses || 0} L</span></div>
     <div class="surface">${rivals.length ? rivals.map(item => `<div class="row"><div><div class="city-name">${esc(item.name)}</div><div class="muted">Mayor ${esc(item.owner_name)} · ${item.population} citizens · ${state.battleRecords[item.id]?.wins || 0} W / ${state.battleRecords[item.id]?.losses || 0} L · Your attacks ${state.pairAttacks[item.id] || 0}/${state.pairBattleLimit} · Incoming ${item.incoming_attacks_24h || 0}/${item.incoming_attack_limit || 6}</div></div><span class="chip">${Date.now()/1000 < item.battle_shield_until ? `Protected ${clock(item.battle_shield_until)}` : !attackable(item) ? 'Daily defense limit' : (state.pairAttacks[item.id] || 0) >= state.pairBattleLimit ? 'Your daily limit' : `🌀 ${item.weirdness}`}</span></div>`).join('') : '<p class="empty">No rivals yet. Invite a friend with your server address.</p>'}</div>
-    <div class="section-head"><div><h2>Twenty-trait battles</h2><p>Twenty random traits shape a unique AI-written encounter. Either city can win regardless of overall level. Winners take trait points and might recruit a rival's special citizen.</p></div><span class="chip" id="battle-timer">${clock(city.next_battle_at) === 'ready' ? 'READY NOW' : 'READY IN ' + clock(city.next_battle_at)}</span></div>
+    <div class="section-head"><div><h2>Twenty-trait battles</h2><p>Twenty random traits shape a unique one-of-a-kind encounter. Either city can win regardless of overall level. Winners take trait points and might recruit a rival's hero.</p></div><span class="chip" id="battle-timer">${clock(city.next_battle_at) === 'ready' ? 'READY NOW' : 'READY IN ' + clock(city.next_battle_at)}</span></div>
     <div class="surface battle-panel"><div><strong>⚔️ Challenge another city</strong><p class="muted">Costs ${city.battle_cost} Wealth. Challengers rest 4 hours; new cities and recent defenders get 1 hour of protection. You can challenge the same city twice per 24 hours. A city can receive at most ${city.incoming_attack_limit || 6} hostile events in 24 hours.</p></div><button class="cast" onclick="startBattle()" ${clock(city.next_battle_at) !== 'ready' || city.wealth < city.battle_cost || !rivals.some(item => attackable(item) && (state.pairAttacks[item.id] || 0) < state.pairBattleLimit) ? 'disabled' : ''}>Choose a rival →</button></div>
     ` : ''}
     ${state.page === 'trades' ? `
@@ -468,8 +495,8 @@ function render() {
     <div class="surface"><p class="progress-note">Sent ${state.tradeQuota.sent_today || 0}/${state.tradeQuota.daily_limit || 10} proposals in the past 24 hours; up to ${state.tradeQuota.pair_daily_limit || 4} per rival. Up to three may be open at once. Offers expire after 48 hours. Citizens moving to another city enter its reserve roster.</p><div class="trade-list">${tradeCards()}</div></div>
     ` : ''}
     ${state.page === 'log' ? `
-    <div class="section-head"><div><h2>City event log</h2><p>Ten recent entries per category. The local AI also picks weird incidents between player events.</p></div><button class="link" onclick="refresh()">Refresh ↻</button></div>
-    <div class="tabs log-tabs"><button class="tab ${state.logTab === 'all' ? 'active' : ''}" onclick="setLogTab('all')">All</button><button class="tab ${state.logTab === 'ambient' ? 'active' : ''}" onclick="setLogTab('ambient')">City AI</button><button class="tab ${state.logTab === 'hero' ? 'active' : ''}" onclick="setLogTab('hero')">Citizens</button><button class="tab ${state.logTab === 'cast' ? 'active' : ''}" onclick="setLogTab('cast')">Events</button><button class="tab ${state.logTab === 'battle' ? 'active' : ''}" onclick="setLogTab('battle')">Battles</button><button class="tab ${state.logTab === 'trade' ? 'active' : ''}" onclick="setLogTab('trade')">Trades</button><button class="tab ${state.logTab === 'hall' ? 'active' : ''}" onclick="setLogTab('hall')">Town Hall</button></div>
+    <div class="section-head"><div><h2>City event log</h2><p>Ten recent entries per category. Odd incidents can happen between player events.</p></div><button class="link" onclick="refresh()">Refresh ↻</button></div>
+    <div class="tabs log-tabs"><button class="tab ${state.logTab === 'all' ? 'active' : ''}" onclick="setLogTab('all')">All</button><button class="tab ${state.logTab === 'ambient' ? 'active' : ''}" onclick="setLogTab('ambient')">City news</button><button class="tab ${state.logTab === 'hero' ? 'active' : ''}" onclick="setLogTab('hero')">Heroes</button><button class="tab ${state.logTab === 'cast' ? 'active' : ''}" onclick="setLogTab('cast')">Events</button><button class="tab ${state.logTab === 'battle' ? 'active' : ''}" onclick="setLogTab('battle')">Battles</button><button class="tab ${state.logTab === 'trade' ? 'active' : ''}" onclick="setLogTab('trade')">Trades</button><button class="tab ${state.logTab === 'hall' ? 'active' : ''}" onclick="setLogTab('hall')">Town Hall</button><button class="tab ${state.logTab === 'production' ? 'active' : ''}" onclick="setLogTab('production')">Goods</button></div>
     <div class="surface">${feedItems()}</div>
     ` : ''}
     ${state.page === 'traits' ? `
@@ -477,7 +504,7 @@ function render() {
     <div class="surface"><div class="trait-controls"><input class="input" placeholder="Search traits…" id="trait-search" value="${esc(state.traitSearch)}"><select id="trait-category" aria-label="Trait category"><option>All</option>${[...new Set(Object.values(city.trait_categories))].map(group => `<option ${state.traitCategory === group ? 'selected' : ''}>${esc(group)}</option>`).join('')}</select><select id="trait-sort" aria-label="Sort traits"><option value="high" ${state.traitSort === 'high' ? 'selected' : ''}>Highest first</option><option value="low" ${state.traitSort === 'low' ? 'selected' : ''}>Lowest first</option><option value="az" ${state.traitSort === 'az' ? 'selected' : ''}>Name A–Z</option><option value="za" ${state.traitSort === 'za' ? 'selected' : ''}>Name Z–A</option></select><label class="group-toggle"><input type="checkbox" id="group-traits" ${state.groupTraits ? 'checked' : ''}> Group traits</label></div><div id="trait-list">${traitRows()}</div></div>
     ` : ''}
     ${state.page === 'glossary' ? glossaryView() : ''}
-    <footer class="footer"><span>Local AI chooses city incidents and speaks as the city. The server keeps effects bounded.</span><a class="link" href="${esc(state.server.replace(/\/$/, ''))}/board" target="_blank" rel="noopener">Project board</a><button class="link" onclick="showAccount()">My city key & server</button></footer>
+    <footer class="footer"><span>Your city keeps growing while you are away.</span><a class="link" href="${esc(state.server.replace(/\/$/, ''))}/board" target="_blank" rel="noopener">Project board</a><button class="link" onclick="showAccount()">My city key & server</button></footer>
   </div>`;
   if (state.page === 'traits') {
     byId('trait-search').oninput = event => { state.traitSearch = event.target.value; byId('trait-list').innerHTML = traitRows(); };
@@ -485,7 +512,6 @@ function render() {
     byId('trait-sort').onchange = event => { state.traitSort = event.target.value; byId('trait-list').innerHTML = traitRows(); };
     byId('group-traits').onchange = event => { state.groupTraits = event.target.checked; localStorage.setItem('chaos_group_traits', String(state.groupTraits)); byId('trait-list').innerHTML = traitRows(); };
   }
-  if (state.page === 'research') showTechNode(state.selectedTech);
 }
 
 window.setEventTab = value => { state.eventTab = value; render(); };
@@ -526,7 +552,7 @@ window.equipHero = async (id, value) => {
 window.showRoster = (slot = 0) => {
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';
-  overlay.innerHTML = `<div class="modal result-modal"><h2>Special citizens</h2><p>Choose who occupies each purchased chair. Everyone else waits in reserve.</p>${state.heroes.length ? state.heroes.map(hero => `<div class="roster-row tier-${esc(hero.tier)}"><div><span class="rarity">${rarityLabel(hero.tier).toUpperCase()}</span><strong>${esc(hero.name)}</strong><small>${esc(hero.title)} · +${1 + ['white','green','blue','purple','orange'].indexOf(hero.tier)} ${esc(hero.specialty)} daily<br>${esc(hero.ability?.effect || '')}</small></div><select aria-label="Equipment slot for ${esc(hero.name)}" onchange="equipHero('${hero.id}',this.value);this.closest('.modal-backdrop').remove()"><option value="" ${hero.slot === null ? 'selected' : ''}>Reserve</option>${Array.from({length:state.me.hero_slots}, (_, index) => `<option value="${index}" ${hero.slot === index ? 'selected' : ''}>Slot ${index+1}</option>`).join('')}</select></div>`).join('') : '<p class="empty">No citizens have joined yet. City AI incidents may introduce one.</p>'}<button class="secondary" id="close-roster">Close</button></div>`;
+  overlay.innerHTML = `<div class="modal result-modal"><h2>Heroes</h2><p>Choose who occupies each purchased chair. Other Heroes wait in reserve.</p>${state.heroes.length ? state.heroes.map(hero => `<div class="roster-row tier-${esc(hero.tier)}"><div><span class="rarity">${rarityLabel(hero.tier).toUpperCase()}</span><strong>${esc(hero.name)}</strong><small>${esc(hero.title)} · +${1 + ['white','green','blue','purple','orange'].indexOf(hero.tier)} ${esc(hero.specialty)} daily<br>${esc(hero.ability?.effect || '')}</small></div><select aria-label="Equipment slot for ${esc(hero.name)}" onchange="equipHero('${hero.id}',this.value);this.closest('.modal-backdrop').remove()"><option value="" ${hero.slot === null ? 'selected' : ''}>Reserve</option>${Array.from({length:state.me.hero_slots}, (_, index) => `<option value="${index}" ${hero.slot === index ? 'selected' : ''}>Slot ${index+1}</option>`).join('')}</select></div>`).join('') : '<p class="empty">No Heroes have joined yet. City news incidents may introduce one.</p>'}<button class="secondary" id="close-roster">Close</button></div>`;
   document.body.appendChild(overlay);
   byId('close-roster').onclick = () => overlay.remove();
 };
@@ -588,7 +614,8 @@ window.chooseEvent = id => {
       const result = await api('/api/events', {method:'POST', body:JSON.stringify({event_id:id, target_city_id})});
       overlay.remove();
       await refresh(true);
-      resultModal(event.name, event.icon, result.story, result.changes, result.success ? 'Event succeeded. The numbers above are the actual results.' : 'Event misfired. The token cost still applies.');
+      const discovery = Object.entries(result.learned_word || {}).map(([word, meaning]) => ` You learned ${word}: ${meaning}.`).join('');
+      resultModal(event.name, event.icon, result.story, result.changes, (result.success ? 'Event succeeded. The numbers above are the actual results.' : 'Event misfired. The token cost still applies.') + discovery);
     } catch (error) { toast(error.message); byId('confirm').disabled = false; byId('confirm').textContent = 'Make it happen'; }
     finally { state.busy = false; }
   };
@@ -633,7 +660,7 @@ window.startBattle = () => {
   if (!targets.length) { toast('Every rival is resting after a battle'); return; }
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';
-  overlay.innerHTML = `<div class="modal"><h2>⚔️ Twenty-trait battle</h2><p>The game randomly chooses 20 traits from both cities and the local AI invents a unique encounter. Either city can win. The winner takes trait points and may recruit a rival's special citizen.</p><label class="field">RIVAL CITY<select id="battle-target">${targets.map(item => `<option value="${item.id}">${esc(item.name)} · ${esc(item.owner_name)}</option>`).join('')}</select></label><p class="cost">Cost: 💰 ${state.me.battle_cost} Wealth · 4-hour rest after fighting</p><div class="actions"><button class="secondary" id="cancel-battle">Cancel</button><button class="primary" id="confirm-battle">Challenge!</button></div></div>`;
+  overlay.innerHTML = `<div class="modal"><h2>⚔️ Twenty-trait battle</h2><p>The game randomly chooses 20 traits from both cities and the city invents a unique encounter. Either city can win. The winner takes trait points and may recruit a rival's hero.</p><label class="field">RIVAL CITY<select id="battle-target">${targets.map(item => `<option value="${item.id}">${esc(item.name)} · ${esc(item.owner_name)}</option>`).join('')}</select></label><p class="cost">Cost: 💰 ${state.me.battle_cost} Wealth · 4-hour rest after fighting</p><div class="actions"><button class="secondary" id="cancel-battle">Cancel</button><button class="primary" id="confirm-battle">Challenge!</button></div></div>`;
   document.body.appendChild(overlay);
   byId('cancel-battle').onclick = () => overlay.remove();
   byId('confirm-battle').onclick = async () => {
