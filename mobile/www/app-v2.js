@@ -25,7 +25,7 @@ const realityStage = weirdness => Math.max(0, Math.min(11, Math.floor((Number(we
 const state = {
   server: localStorage.getItem('chaos_server') || location.origin,
   key: localStorage.getItem('chaos_key') || '',
-  me: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
+  me: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
   eventTab: 'self', logTab: 'all', traitsOpen: false, traitSearch: '', traitCategory: 'All', traitSort: 'high', groupTraits: localStorage.getItem('chaos_group_traits') !== 'false',
   setupMode: 'new', page: 'city', busy: false, selectedTech: 'city_charter', techBranch: 'Commerce',
   googleClientId: '',
@@ -82,6 +82,9 @@ function clock(seconds) {
   if (!remaining) return 'ready';
   if (remaining >= 3600) return `${Math.floor(remaining / 3600)}h ${Math.floor(remaining % 3600 / 60)}m`;
   return `${Math.floor(remaining / 60)}m ${remaining % 60}s`;
+}
+function attackable(city) {
+  return Date.now()/1000 >= city.battle_shield_until && (city.incoming_attacks_24h || 0) < (city.incoming_attack_limit || 6);
 }
 
 function setup() {
@@ -198,6 +201,7 @@ async function refresh(quiet = false) {
     state.techTree = mine.tech_tree || [];
     state.specializations = mine.specializations || [];
     state.trades = diplomacy.offers || [];
+    state.tradeQuota = diplomacy;
     state.rivalHeroes = diplomacy.rival_heroes || [];
     state.cities = world.cities;
     state.battleRecords = world.battle_records || {};
@@ -370,8 +374,8 @@ function glossaryView() {
     ['Traits', 'Your city has 320 individual personality scores in ten groups. Search and sort them in Traits. Battles randomly sample twenty, so a younger city can challenge an older one.'],
     ['Research and upgrades', 'Research follows connected dots. Tap a dot to see requirements and its exact effect. Shop upgrades spend Cash and can raise hourly growth or add citizen and building slots.'],
     ['Special citizens and buildings', 'Events can bring in special citizens. Only equipped citizens provide daily stat bonuses, matching trait bonuses in battle, team power, and defense. A hero gets an extra team bonus when their ally race fights alongside them. Each city starts with one citizen slot and one building plot; the shop can unlock more.'],
-    ['Battles', 'A challenge costs Wealth. Twenty random traits and five resident race duels affect the odds, limited to 35–65%. A resident deals double damage to their preferred enemy race. The winner moves a few trait points and sometimes recruits one of the loser’s special citizens. Buildings and city specialization may add defense.'],
-    ['Trades', 'Offer Wealth or a special citizen to another mayor. They must accept before anything moves. Offers expire after 48 hours.'],
+    ['Battles', 'A challenge costs Wealth. Twenty random traits and five resident race duels affect the odds, limited to 35–65%. A resident deals double damage to their preferred enemy race. The winner moves a few trait points and sometimes recruits one of the loser’s special citizens. Buildings and city specialization may add defense. A city can receive six hostile events in 24 hours, counting both battles and Chaos Token attacks.'],
+    ['Trades', 'Offer Wealth or a special citizen to another mayor. They must accept before anything moves. Offers expire after 48 hours. You can send ten proposals per 24 hours, at most four to one rival; canceled offers still count.'],
   ];
   return `<div class="section-head"><div><h2>Getting started & glossary</h2><p>A plain language guide to the city and its rules.</p></div></div><div class="glossary-list">${sections.map(([title,body],index) => `<details class="surface" ${index===0 ? 'open' : ''}><summary>${esc(title)}</summary><p>${esc(body)}</p></details>`).join('')}</div>`;
 }
@@ -427,13 +431,13 @@ function render() {
     ` : ''}
     ${state.page === 'battles' ? `
     <div class="section-head"><div><h2>Other cities</h2><p>Friends on this server can send chaos back. Battle records cover the last 30 days.</p></div><span class="chip">Your record: ${state.battleRecords[city.id]?.wins || 0} W · ${state.battleRecords[city.id]?.losses || 0} L</span></div>
-    <div class="surface">${rivals.length ? rivals.map(item => `<div class="row"><div><div class="city-name">${esc(item.name)}</div><div class="muted">Mayor ${esc(item.owner_name)} · ${item.population} citizens · ${state.battleRecords[item.id]?.wins || 0} W / ${state.battleRecords[item.id]?.losses || 0} L · Your attacks today ${state.pairAttacks[item.id] || 0}/${state.pairBattleLimit}</div></div><span class="chip">${Date.now()/1000 < item.battle_shield_until ? `Protected ${clock(item.battle_shield_until)}` : (state.pairAttacks[item.id] || 0) >= state.pairBattleLimit ? 'Daily limit' : `🌀 ${item.weirdness}`}</span></div>`).join('') : '<p class="empty">No rivals yet. Invite a friend with your server address.</p>'}</div>
+    <div class="surface">${rivals.length ? rivals.map(item => `<div class="row"><div><div class="city-name">${esc(item.name)}</div><div class="muted">Mayor ${esc(item.owner_name)} · ${item.population} citizens · ${state.battleRecords[item.id]?.wins || 0} W / ${state.battleRecords[item.id]?.losses || 0} L · Your attacks ${state.pairAttacks[item.id] || 0}/${state.pairBattleLimit} · Incoming ${item.incoming_attacks_24h || 0}/${item.incoming_attack_limit || 6}</div></div><span class="chip">${Date.now()/1000 < item.battle_shield_until ? `Protected ${clock(item.battle_shield_until)}` : !attackable(item) ? 'Daily defense limit' : (state.pairAttacks[item.id] || 0) >= state.pairBattleLimit ? 'Your daily limit' : `🌀 ${item.weirdness}`}</span></div>`).join('') : '<p class="empty">No rivals yet. Invite a friend with your server address.</p>'}</div>
     <div class="section-head"><div><h2>Twenty-trait battles</h2><p>Twenty random traits shape a unique AI-written encounter. Either city can win regardless of overall level. Winners take trait points and might recruit a rival's special citizen.</p></div><span class="chip" id="battle-timer">${clock(city.next_battle_at) === 'ready' ? 'READY NOW' : 'READY IN ' + clock(city.next_battle_at)}</span></div>
-    <div class="surface battle-panel"><div><strong>⚔️ Challenge another city</strong><p class="muted">Costs ${city.battle_cost} Wealth. Challengers rest 4 hours; new cities and recent defenders get 1 hour of protection. You can challenge the same city twice per 24 hours.</p></div><button class="cast" onclick="startBattle()" ${clock(city.next_battle_at) !== 'ready' || city.wealth < city.battle_cost || !rivals.some(item => Date.now()/1000 >= item.battle_shield_until && (state.pairAttacks[item.id] || 0) < state.pairBattleLimit) ? 'disabled' : ''}>Choose a rival →</button></div>
+    <div class="surface battle-panel"><div><strong>⚔️ Challenge another city</strong><p class="muted">Costs ${city.battle_cost} Wealth. Challengers rest 4 hours; new cities and recent defenders get 1 hour of protection. You can challenge the same city twice per 24 hours. A city can receive at most ${city.incoming_attack_limit || 6} hostile events in 24 hours.</p></div><button class="cast" onclick="startBattle()" ${clock(city.next_battle_at) !== 'ready' || city.wealth < city.battle_cost || !rivals.some(item => attackable(item) && (state.pairAttacks[item.id] || 0) < state.pairBattleLimit) ? 'disabled' : ''}>Choose a rival →</button></div>
     ` : ''}
     ${state.page === 'trades' ? `
-    <div class="section-head"><div><h2>City-to-city trades</h2><p>Propose a citizen swap, a Wealth exchange, or a gift. The other mayor must accept before anything moves.</p></div><button class="cast" onclick="showTradeProposal()" ${rivals.length ? '' : 'disabled'}>Propose a trade →</button></div>
-    <div class="surface"><p class="progress-note">Up to three open proposals per city. Offers expire after 48 hours. Citizens moving to another city enter its reserve roster.</p><div class="trade-list">${tradeCards()}</div></div>
+    <div class="section-head"><div><h2>City-to-city trades</h2><p>Propose a citizen swap, a Wealth exchange, or a gift. The other mayor must accept before anything moves.</p></div><button class="cast" onclick="showTradeProposal()" ${rivals.some(item => (state.tradeQuota.pair_sent_today?.[item.id] || 0) < (state.tradeQuota.pair_daily_limit || 4)) && (state.tradeQuota.sent_today || 0) < (state.tradeQuota.daily_limit || 10) ? '' : 'disabled'}>Propose a trade →</button></div>
+    <div class="surface"><p class="progress-note">Sent ${state.tradeQuota.sent_today || 0}/${state.tradeQuota.daily_limit || 10} proposals in the past 24 hours; up to ${state.tradeQuota.pair_daily_limit || 4} per rival. Up to three may be open at once. Offers expire after 48 hours. Citizens moving to another city enter its reserve roster.</p><div class="trade-list">${tradeCards()}</div></div>
     ` : ''}
     ${state.page === 'log' ? `
     <div class="section-head"><div><h2>City event log</h2><p>Ten recent entries per category. The local AI also picks weird incidents between player events.</p></div><button class="link" onclick="refresh()">Refresh ↻</button></div>
@@ -530,8 +534,8 @@ function resultModal(title, icon, story, changes, note, battle = false, samples 
 
 window.chooseEvent = id => {
   const event = state.events.find(item => item.id === id);
-  const targets = state.cities.filter(item => item.id !== state.me.id && Date.now()/1000 >= item.battle_shield_until);
-  if (event.kind === 'attack' && !targets.length) { toast('No rival is available yet. New and recently attacked cities have one hour of protection.'); return; }
+  const targets = state.cities.filter(item => item.id !== state.me.id && attackable(item));
+  if (event.kind === 'attack' && !targets.length) { toast('No rival is available. Shields and daily defense limits protect them.'); return; }
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';
   overlay.innerHTML = `<div class="modal"><h2>${event.icon} ${esc(event.name)}</h2><p>${esc(event.tagline)}</p><p class="cost">Cost: ${walletCost(event)}</p>${event.kind === 'attack' ? `<label class="field">TARGET CITY<select id="target">${targets.map(item => `<option value="${item.id}">${esc(item.name)} · ${esc(item.owner_name)}</option>`).join('')}</select></label>` : '<p>Your city will be the target.</p>'}<div class="actions"><button class="secondary" id="cancel">Cancel</button><button class="primary" id="confirm">Make it happen</button></div></div>`;
@@ -587,7 +591,7 @@ window.buildCity = id => {
 
 window.startBattle = () => {
   if (state.busy) return;
-  const targets = state.cities.filter(item => item.id !== state.me.id && Date.now()/1000 >= item.battle_shield_until && (state.pairAttacks[item.id] || 0) < state.pairBattleLimit);
+  const targets = state.cities.filter(item => item.id !== state.me.id && attackable(item) && (state.pairAttacks[item.id] || 0) < state.pairBattleLimit);
   if (!targets.length) { toast('Every rival is resting after a battle'); return; }
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';
@@ -641,7 +645,8 @@ window.startBattle = () => {
 
 window.showTradeProposal = () => {
   if (state.busy) return;
-  const rivals = state.cities.filter(item => item.id !== state.me.id);
+  if ((state.tradeQuota.sent_today || 0) >= (state.tradeQuota.daily_limit || 10)) { toast('Daily trade proposal limit reached'); return; }
+  const rivals = state.cities.filter(item => item.id !== state.me.id && (state.tradeQuota.pair_sent_today?.[item.id] || 0) < (state.tradeQuota.pair_daily_limit || 4));
   if (!rivals.length) return;
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';

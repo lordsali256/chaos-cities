@@ -61,6 +61,9 @@ BATTLE_COOLDOWN = 4 * 3600
 DEFENSE_COOLDOWN = 3600
 NEW_CITY_SHIELD = 3600
 PAIR_BATTLE_LIMIT = 2
+INCOMING_ATTACK_LIMIT = 6
+TRADE_DAILY_LIMIT = 10
+TRADE_PAIR_DAILY_LIMIT = 4
 TIERS = ("white", "green", "blue", "purple", "orange")
 RARITY_LABELS = dict(zip(TIERS, ("Common", "Uncommon", "Rare", "Epic", "Legendary")))
 OFFER_SECONDS = 6 * 3600
@@ -481,6 +484,10 @@ def city_view(row, private=False):
     return data
 
 
+def incoming_attack_count(db, city_id, now):
+    return db.execute("SELECT COUNT(*) FROM event_log WHERE target_id=? AND actor_id<>target_id AND kind IN ('battle','cast') AND created_at>=?", (city_id, now - 86400)).fetchone()[0]
+
+
 def research_duration(node):
     # Short first steps, then progressively longer projects; all durations are server-owned.
     return min(1800, 45 + 25 * len(node["requires"]) + 6 * node["tech"])
@@ -696,7 +703,9 @@ def me(authorization: str | None = Header(None)):
         next_offers_at = min((row["created_at"] for row in db.execute("SELECT created_at FROM chaos_offers WHERE city_id=?", (city["id"],))), default=int(time.time())) + OFFER_SECONDS
         residents = [resident_view(row) for row in db.execute("SELECT name,race FROM residents WHERE city_id=? ORDER BY ordinal", (city["id"],))]
         active = db.execute("SELECT * FROM research_queue WHERE city_id=?", (city["id"],)).fetchone()
-        return {"city": city_view(city, True), "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"])}
+        private_city = city_view(city, True)
+        private_city.update(incoming_attacks_24h=incoming_attack_count(db, city["id"], int(time.time())), incoming_attack_limit=INCOMING_ATTACK_LIMIT)
+        return {"city": private_city, "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"])}
 
 
 @app.post("/api/city/rename")
@@ -746,7 +755,13 @@ def cities(authorization: str | None = Header(None)):
         if authorization:
             actor = auth(db, authorization)
             pair_attacks = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM event_log WHERE kind='battle' AND actor_id=? AND created_at>=? GROUP BY target_id", (actor["id"], now-86400))}
-        return {"cities": [city_view(daily_tick(db, row, now)) for row in rows], "battle_records": records, "pair_attacks": pair_attacks, "pair_battle_limit": PAIR_BATTLE_LIMIT}
+        incoming = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM event_log WHERE actor_id<>target_id AND kind IN ('battle','cast') AND created_at>=? GROUP BY target_id", (now-86400,))}
+        public_cities = []
+        for row in rows:
+            view = city_view(daily_tick(db, row, now))
+            view.update(incoming_attacks_24h=incoming.get(row["id"], 0), incoming_attack_limit=INCOMING_ATTACK_LIMIT)
+            public_cities.append(view)
+        return {"cities": public_cities, "battle_records": records, "pair_attacks": pair_attacks, "pair_battle_limit": PAIR_BATTLE_LIMIT}
 
 
 def trade_view(row):
@@ -759,14 +774,17 @@ def trade_view(row):
 def list_trades(authorization: str | None = Header(None)):
     with LOCK, database() as db:
         city = auth(db, authorization)
-        db.execute("UPDATE trade_offers SET status='expired',resolved_at=? WHERE status='pending' AND expires_at<=?", (int(time.time()), int(time.time())))
+        now = int(time.time())
+        db.execute("UPDATE trade_offers SET status='expired',resolved_at=? WHERE status='pending' AND expires_at<=?", (now, now))
         rows = db.execute("""SELECT o.*,s.name sender_name,t.name target_name,
                            h1.name offer_hero_name,h2.name request_hero_name FROM trade_offers o
                            JOIN cities s ON s.id=o.sender_id JOIN cities t ON t.id=o.target_id
                            LEFT JOIN heroes h1 ON h1.id=o.offer_hero_id LEFT JOIN heroes h2 ON h2.id=o.request_hero_id
                            WHERE o.sender_id=? OR o.target_id=? ORDER BY o.created_at DESC LIMIT 30""", (city["id"], city["id"])).fetchall()
         rivals = [dict(row) for row in db.execute("SELECT id,city_id,name,title,tier FROM heroes WHERE city_id<>? ORDER BY joined_at DESC LIMIT 100", (city["id"],))]
-        return {"offers": [trade_view(row) for row in rows], "rival_heroes": rivals}
+        sent_today = db.execute("SELECT COUNT(*) FROM trade_offers WHERE sender_id=? AND created_at>=?", (city["id"], now-86400)).fetchone()[0]
+        pair_sent = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM trade_offers WHERE sender_id=? AND created_at>=? GROUP BY target_id", (city["id"], now-86400))}
+        return {"offers": [trade_view(row) for row in rows], "rival_heroes": rivals, "sent_today": sent_today, "daily_limit": TRADE_DAILY_LIMIT, "pair_sent_today": pair_sent, "pair_daily_limit": TRADE_PAIR_DAILY_LIMIT}
 
 
 @app.post("/api/trades")
@@ -780,6 +798,12 @@ def propose_trade(data: TradeRequest, authorization: str | None = Header(None)):
             raise HTTPException(400, "Choose another city")
         if not db.execute("SELECT 1 FROM cities WHERE id=?", (data.target_city_id,)).fetchone():
             raise HTTPException(404, "Target city not found")
+        sent_today = db.execute("SELECT COUNT(*) FROM trade_offers WHERE sender_id=? AND created_at>=?", (sender["id"], now-86400)).fetchone()[0]
+        if sent_today >= TRADE_DAILY_LIMIT:
+            raise HTTPException(429, "You have reached your daily trade proposal limit")
+        sent_to_target = db.execute("SELECT COUNT(*) FROM trade_offers WHERE sender_id=? AND target_id=? AND created_at>=?", (sender["id"], data.target_city_id, now-86400)).fetchone()[0]
+        if sent_to_target >= TRADE_PAIR_DAILY_LIMIT:
+            raise HTTPException(429, "You have sent this city enough proposals today")
         pending = db.execute("SELECT COUNT(*) FROM trade_offers WHERE sender_id=? AND status='pending' AND expires_at>?", (sender["id"], now)).fetchone()[0]
         if pending >= 3:
             raise HTTPException(409, "You already have three open trade offers")
@@ -1194,6 +1218,8 @@ def cast(data: Cast, authorization: str | None = Header(None)):
                 raise HTTPException(409, "This new city is protected for its first hour")
             if now < target["last_attacked"] + DEFENSE_COOLDOWN:
                 raise HTTPException(409, "This city is recovering from an attack")
+            if incoming_attack_count(db, target_id, now) >= INCOMING_ATTACK_LIMIT:
+                raise HTTPException(409, "This city has reached its daily defense limit")
         if actor["tokens"] < event["cost"]:
             raise HTTPException(409, "Not enough Chaos Tokens")
         if actor["shards"] < event["shard_cost"]:
@@ -1396,6 +1422,8 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
             raise HTTPException(409, "This city is recovering from a battle")
         if now < target["created_at"] + NEW_CITY_SHIELD:
             raise HTTPException(409, "This new city is protected for its first hour")
+        if incoming_attack_count(db, target["id"], now) >= INCOMING_ATTACK_LIMIT:
+            raise HTTPException(409, "This city has reached its daily defense limit")
         recent_pair = db.execute("SELECT COUNT(*) FROM event_log WHERE kind='battle' AND actor_id=? AND target_id=? AND created_at>=?", (actor["id"], target["id"], now-86400)).fetchone()[0]
         if recent_pair >= PAIR_BATTLE_LIMIT:
             raise HTTPException(409, "You have challenged this city twice in the last 24 hours")

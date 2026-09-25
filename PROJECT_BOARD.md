@@ -38,6 +38,9 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] City page highlights the strongest recent positive event rewards.
 - [x] Battles now play a 42-second animated reveal with commentary based on sampled traits; the local model supplies ticker lines when available.
 - [x] Android v0.3.1 demo built, installed on the Pixel, and published as a public GitHub prerelease.
+- [x] Defenders can receive at most six hostile events in 24 hours across battles and Chaos Token attacks.
+- [x] Trade proposals are limited to ten per day and four per rival, including canceled offers.
+- [x] Concurrent multiplayer tests cover simultaneous PvP attacks and trade acceptance against a temporary database.
 
 ## Verify and polish
 

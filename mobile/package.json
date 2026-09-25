@@ -1,7 +1,7 @@
 {
   "name": "chaos-cities",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "scripts": {
     "bundle": "esbuild native-entry.js --bundle --format=iife --minify --outfile=www/native-app.js",
     "android": "npm run bundle && npx cap sync android"
