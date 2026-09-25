@@ -736,6 +736,14 @@ def incoming_attack_count(db, city_id, now):
     return db.execute("SELECT COUNT(*) FROM event_log WHERE target_id=? AND actor_id<>target_id AND kind IN ('battle','cast') AND created_at>=?", (city_id, now - 86400)).fetchone()[0]
 
 
+def hero_loss_protection_until(db, city_id, now):
+    row = db.execute("""SELECT MAX(created_at) FROM event_log WHERE kind='battle' AND created_at>=?
+                         AND ((success=1 AND target_id=?) OR (success=0 AND actor_id=?))
+                         AND (CASE WHEN json_valid(deltas) THEN json_extract(deltas,'$.hero') ELSE NULL END) IS NOT NULL
+                         """, (now - 86400, city_id, city_id)).fetchone()
+    return row[0] + 86400 if row[0] is not None else 0
+
+
 def research_duration(node):
     # Short first steps, then progressively longer projects; all durations are server-owned.
     return min(1800, 45 + 25 * len(node["requires"]) + 6 * node["tech"])
@@ -959,7 +967,8 @@ def me(authorization: str | None = Header(None)):
         residents = [resident_view(row) for row in db.execute("SELECT name,race,alien_word FROM residents WHERE city_id=? ORDER BY ordinal", (city["id"],))]
         active = db.execute("SELECT * FROM research_queue WHERE city_id=?", (city["id"],)).fetchone()
         private_city = city_view(city, True)
-        private_city.update(incoming_attacks_24h=incoming_attack_count(db, city["id"], int(time.time())), incoming_attack_limit=INCOMING_ATTACK_LIMIT)
+        private_city.update(incoming_attacks_24h=incoming_attack_count(db, city["id"], int(time.time())), incoming_attack_limit=INCOMING_ATTACK_LIMIT,
+                            hero_loss_protection_until=hero_loss_protection_until(db, city["id"], int(time.time())))
         for hero in heroes:
             hero["name"] = alien_name(hero["name"], hero["alien_word"])
         known_words = {row["word"]: ALIEN_WORDS[row["word"]] for row in db.execute("SELECT word FROM alien_knowledge WHERE city_id=?", (city["id"],)) if row["word"] in ALIEN_WORDS}
@@ -1217,7 +1226,8 @@ def cities(authorization: str | None = Header(None)):
         public_cities = []
         for row in rows:
             view = city_view(daily_tick(db, row, now))
-            view.update(incoming_attacks_24h=incoming.get(row["id"], 0), incoming_attack_limit=INCOMING_ATTACK_LIMIT)
+            view.update(incoming_attacks_24h=incoming.get(row["id"], 0), incoming_attack_limit=INCOMING_ATTACK_LIMIT,
+                        hero_loss_protection_until=hero_loss_protection_until(db, row["id"], now))
             public_cities.append(view)
         return {"cities": public_cities, "battle_records": records, "pair_attacks": pair_attacks, "pair_battle_limit": PAIR_BATTLE_LIMIT}
 
@@ -1994,7 +2004,7 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         winner_traits, loser_traits = (actor_traits, target_traits) if success else (target_traits, actor_traits)
         stolen_hero = None
         eligible_heroes = db.execute("SELECT * FROM heroes WHERE city_id=? ORDER BY joined_at", (loser["id"],)).fetchall()
-        if eligible_heroes and secrets.randbelow(100) < 30:
+        if eligible_heroes and hero_loss_protection_until(db, loser["id"], now) <= now and secrets.randbelow(100) < 30:
             stolen_hero = secrets.choice(eligible_heroes)
             db.execute("UPDATE heroes SET city_id=?,slot=NULL WHERE id=?", (winner["id"], stolen_hero["id"]))
             learn_alien_word(db, winner["id"], stolen_hero["alien_word"])
