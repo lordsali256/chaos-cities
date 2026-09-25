@@ -2,6 +2,9 @@
 # Do not enable this alongside another service already using ports 80/443.
 services:
   server:
+    # Only Caddy may reach the game on a public host. The base compose file
+    # exposes port 3010 for home-network Android testing.
+    ports: !override []
     environment:
       INVITE_CODE: ${INVITE_CODE:?Set a private INVITE_CODE in .env before public hosting}
       PHONE_SERVER_URL: https://${GAME_DOMAIN:?Set GAME_DOMAIN in .env}

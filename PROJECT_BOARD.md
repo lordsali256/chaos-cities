@@ -48,6 +48,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] SQLite online backup command checks integrity without stopping the game; a private host copy can be kept outside Git.
 - [x] City listings and event feeds require a city key; the standalone feed is limited to the signed-in city's events.
 - [x] Public sign-ups are capped at five new cities per public IP per day, using hashed addresses; public mode requires a long invite code.
+- [x] Public Docker configuration exposes only the HTTPS proxy; the game port is closed to direct traffic so address-based limits cannot be bypassed through it.
 - [x] Repeated temporary-city playtest covers forty PvP battles, citizen transfers, trait conservation, and eight Wealth trades.
 - [x] Equipped citizens have stable Guard, Rally, or Focus combat roles; battle records show each citizen's actual contribution.
 - [x] A battle that transfers a special citizen immediately closes pending trade offers involving that citizen.
