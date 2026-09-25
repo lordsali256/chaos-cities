@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory() as folder:
             db.execute("UPDATE cities SET created_at=?,wealth=60,last_battle=0,last_attacked=0 WHERE id=?",
                        (now - 7200, city["city"]["id"]))
 
+    real_battle_story = main.battle_story
     main.battle_story = lambda actor, target, sampled, winner, reward: (
         "The Concurrent Cabbage Cup", f"I am {target}. {winner} won the contest and received {reward}.", [])
     target_id = defender["city"]["id"]
@@ -79,4 +80,57 @@ with tempfile.TemporaryDirectory() as folder:
     assert quota["sent_today"] == main.TRADE_DAILY_LIMIT
     assert client.post("/api/trades", json={"target_city_id": second["city"]["id"], "request_wealth": 1}, headers=heads[0]).status_code == 429
 
-    print("Concurrent PvP shield, trade spending, daily defense and proposal limits: PASS")
+    for route in ("/api/me", "/api/trades"):
+        assert client.get(route).status_code == 401
+    assert client.post("/api/battles", json={"target_city_id": target_id}).status_code == 401
+    assert client.post("/api/trades", json={"target_city_id": target_id, "request_wealth": 1}).status_code == 401
+    assert client.post(f"/api/trades/{offers[0].json()['id']}/accept", headers=heads[1]).status_code == 404
+
+    underdog = client.post("/api/register", json={"player": "Underdog Mayor", "city": "Longshot"}).json()
+    giant = client.post("/api/register", json={"player": "Giant Mayor", "city": "Talltown"}).json()
+    underdog_id, giant_id = underdog["city"]["id"], giant["city"]["id"]
+    underdog_head = {"Authorization": f"Bearer {underdog['city_key']}"}
+    with main.database() as db:
+        db.execute("UPDATE cities SET traits=?,created_at=?,wealth=200 WHERE id=?",
+                   (main.json.dumps({trait: 0 for trait in main.TRAIT_NAMES}), now - 7200, underdog_id))
+        db.execute("UPDATE cities SET traits=?,created_at=?,wealth=200 WHERE id=?",
+                   (main.json.dumps({trait: 100 for trait in main.TRAIT_NAMES}), now - 7200, giant_id))
+    original_roll = main.secrets.randbelow
+    main.secrets.randbelow = lambda upper: 0
+    try:
+        upset = client.post("/api/battles", json={"target_city_id": giant_id}, headers=underdog_head)
+    finally:
+        main.secrets.randbelow = original_roll
+    assert upset.status_code == 200 and upset.json()["success"], upset.text
+    assert 35 <= upset.json()["chance"] <= 65
+    assert 0 <= upset.json()["moved"] <= 6
+    with main.database() as db:
+        weak = main.json.loads(db.execute("SELECT traits FROM cities WHERE id=?", (underdog_id,)).fetchone()[0])
+        strong = main.json.loads(db.execute("SELECT traits FROM cities WHERE id=?", (giant_id,)).fetchone()[0])
+        assert all(weak[trait] + strong[trait] == 100 for trait in main.TRAIT_NAMES)
+        assert all(0 <= score <= 100 for score in weak.values())
+        assert all(0 <= score <= 100 for score in strong.values())
+
+    class SpoilerStory:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": main.json.dumps({
+                "title": "The Great Pretzel Census",
+                "story": "I am Talltown. The census was chaotic, but we settled it with a pretzel referendum.",
+                "beats": ["The pretzel commission is counting every twist.",
+                          "We win because the other city forgot its paperwork.",
+                          "The defenders lost the contest before lunch."]})}}
+
+    original_post = main.httpx.post
+    main.httpx.post = lambda *args, **kwargs: SpoilerStory()
+    try:
+        story = real_battle_story("Longshot", "Talltown", [
+            {"name": "Pretzel Policy", "attacker": 1, "defender": 99},
+            {"name": "Civic Humor", "attacker": 4, "defender": 96}], "Longshot", "2 trait points")
+    finally:
+        main.httpx.post = original_post
+    assert story[2] == ["The pretzel commission is counting every twist."], story
+
+    print("Concurrent PvP, trade spending, access control, underdog fairness, and spoiler filtering: PASS")

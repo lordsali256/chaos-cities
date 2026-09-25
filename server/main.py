@@ -1398,7 +1398,7 @@ def battle_story(actor, target, sampled, winner, reward):
                 if not db.execute("SELECT 1 FROM used_content WHERE content_hash=?", (digest,)).fetchone():
                     db.execute("INSERT INTO used_content VALUES (?,?)", (digest, int(time.time())))
                     beats = [str(line).strip()[:140] for line in content.get("beats", []) if isinstance(line, str)]
-                    beats = [line for line in beats if 15 <= len(line) <= 140 and safe_content(line) and not re.search(r"\b(won|winner|victory|reward|stole)\b", line, re.I)]
+                    beats = [line for line in beats if 15 <= len(line) <= 140 and safe_content(line) and not re.search(r"\b(?:win(?:s|ning)?|won|winner|victor(?:y|ious)?|defeat(?:ed|s)?|lose|loses|lost|reward|stole|steal(?:s|ing)?|prevail(?:s|ed)?)\b", line, re.I)]
                     return proposed_title, proposed_story, beats[:8]
     except Exception:
         pass

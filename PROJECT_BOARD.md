@@ -41,6 +41,8 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] Defenders can receive at most six hostile events in 24 hours across battles and Chaos Token attacks.
 - [x] Trade proposals are limited to ten per day and four per rival, including canceled offers.
 - [x] Concurrent multiplayer tests cover simultaneous PvP attacks and trade acceptance against a temporary database.
+- [x] Edge-case tests confirm an underdog can win, trait totals are conserved, and unauthenticated or unrelated cities cannot use protected trade and battle actions.
+- [x] A live local-model story check found an early winner reveal; battle commentary now filters winner and loser spoilers until the reveal.
 
 ## Verify and polish
 
