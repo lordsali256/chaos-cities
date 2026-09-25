@@ -174,4 +174,14 @@ with tempfile.TemporaryDirectory() as folder:
         assert db.execute("SELECT COUNT(*) FROM registration_log").fetchone()[0] == 3
         assert all(len(row[0]) == 64 for row in db.execute("SELECT DISTINCT client_hash FROM registration_log"))
 
-    print("Concurrent PvP, Wealth and goods trades, access control, underdog fairness, spoiler and sign-up limits: PASS")
+    with main.database() as db:
+        for index in range(110):
+            db.execute("INSERT INTO heroes (id,city_id,name,title,tier,specialty,slot,joined_at) VALUES (?,?,?,?,?,?,?,?)",
+                       (f"roster-{index}", target_id, f"Hero {index}", "Civic Tester", "white", "morale", None, now + index))
+    roster = client.get(f"/api/cities/{target_id}/heroes", headers=heads[0])
+    assert roster.status_code == 200 and len(roster.json()["heroes"]) == 110, roster.text
+    assert {hero["id"] for hero in roster.json()["heroes"]} == {f"roster-{index}" for index in range(110)}
+    assert client.get(f"/api/cities/{target_id}/heroes").status_code == 401
+    assert client.get("/api/cities/no-such-city/heroes", headers=heads[0]).status_code == 404
+
+    print("Concurrent PvP, trades, access control, underdog fairness, sign-up limits, and full rival rosters: PASS")

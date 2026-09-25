@@ -1233,6 +1233,16 @@ def cities(authorization: str | None = Header(None)):
         return {"cities": public_cities, "battle_records": records, "pair_attacks": pair_attacks, "pair_battle_limit": PAIR_BATTLE_LIMIT}
 
 
+@app.get("/api/cities/{city_id}/heroes")
+def rival_city_heroes(city_id: str, authorization: str | None = Header(None)):
+    with LOCK, database() as db:
+        auth(db, authorization)
+        if not db.execute("SELECT 1 FROM cities WHERE id=?", (city_id,)).fetchone():
+            raise HTTPException(404, "City not found")
+        return {"heroes": [dict(row) for row in db.execute(
+            "SELECT id,name,title,tier FROM heroes WHERE city_id=? ORDER BY joined_at DESC,id", (city_id,))]}
+
+
 def trade_view(row):
     return {key: row[key] for key in ("id", "sender_id", "target_id", "sender_name", "target_name",
                                        "offer_hero_id", "request_hero_id", "offer_hero_name", "request_hero_name",
@@ -1251,10 +1261,9 @@ def list_trades(authorization: str | None = Header(None)):
                            JOIN cities s ON s.id=o.sender_id JOIN cities t ON t.id=o.target_id
                            LEFT JOIN heroes h1 ON h1.id=o.offer_hero_id LEFT JOIN heroes h2 ON h2.id=o.request_hero_id
                            WHERE o.sender_id=? OR o.target_id=? ORDER BY o.created_at DESC LIMIT 30""", (city["id"], city["id"])).fetchall()
-        rivals = [dict(row) for row in db.execute("SELECT id,city_id,name,title,tier FROM heroes WHERE city_id<>? ORDER BY joined_at DESC LIMIT 100", (city["id"],))]
         sent_today = db.execute("SELECT COUNT(*) FROM trade_offers WHERE sender_id=? AND created_at>=?", (city["id"], now-86400)).fetchone()[0]
         pair_sent = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM trade_offers WHERE sender_id=? AND created_at>=? GROUP BY target_id", (city["id"], now-86400))}
-        return {"offers": [trade_view(row) for row in rows], "rival_heroes": rivals, "sent_today": sent_today, "daily_limit": TRADE_DAILY_LIMIT, "pair_sent_today": pair_sent, "pair_daily_limit": TRADE_PAIR_DAILY_LIMIT}
+        return {"offers": [trade_view(row) for row in rows], "sent_today": sent_today, "daily_limit": TRADE_DAILY_LIMIT, "pair_sent_today": pair_sent, "pair_daily_limit": TRADE_PAIR_DAILY_LIMIT}
 
 
 @app.post("/api/trades")

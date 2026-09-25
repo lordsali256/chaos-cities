@@ -65,11 +65,12 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Concurrent goods trades cannot spend the same city inventory twice; research dots and building confirmation show their full goods costs.
 - [x] City event history and PvP pair-limit lookups have indexes for both the acting and receiving city as the log grows.
 - [x] The local battle writer receives the sampled traits where each city is stronger, with their owners clearly marked, to keep story details tied to the actual personalities.
+- [x] Trade proposals load the chosen rival city's Heroes on demand, so older cities remain tradeable after the world passes 100 Heroes.
 
 ## Verify and polish
 
 - [ ] Playtest economy costs, tech gates, battle rewards, and citizen theft with multiple real players.
-- [ ] Complete an interactive Pixel playtest with the latest multiplayer APK while the phone is unlocked.
+- [ ] Complete an interactive Pixel playtest with the built v0.5.4 APK while the phone is unlocked.
 - [ ] Scan the city QR with the Pixel camera and verify the complete Android sign-in once the phone reconnects.
 - [ ] Tune local AI battle generation for variety and accurate personality descriptions.
 - [ ] Google OAuth is on hold at the owner's request; city-key entry remains the visible login.

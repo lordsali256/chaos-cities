@@ -25,7 +25,7 @@ const realityStage = weirdness => Math.max(0, Math.min(11, Math.floor((Number(we
 const state = {
   server: localStorage.getItem('chaos_server') || location.origin,
   key: localStorage.getItem('chaos_key') || '',
-  me: null, hall: null, economy: null, alienWords: {}, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
+  me: null, hall: null, economy: null, alienWords: {}, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, nextOffersAt: 0, research: null, dailyTagline: '',
   eventTab: 'self', logTab: 'all', traitsOpen: false, traitSearch: '', traitCategory: 'All', traitSort: 'high', groupTraits: localStorage.getItem('chaos_group_traits') !== 'false',
   setupMode: 'new', page: 'city', busy: false, selectedTech: 'city_charter', techBranch: 'Commerce',
   googleClientId: '',
@@ -207,7 +207,6 @@ async function refresh(quiet = false) {
     state.specializations = mine.specializations || [];
     state.trades = diplomacy.offers || [];
     state.tradeQuota = diplomacy;
-    state.rivalHeroes = diplomacy.rival_heroes || [];
     state.cities = world.cities;
     state.battleRecords = world.battle_records || {};
     state.pairAttacks = world.pair_attacks || {};
@@ -713,7 +712,29 @@ window.showTradeProposal = () => {
   const goodOptions = `<option value="">None</option>${Object.keys(state.economy?.goods || {}).map(name => `<option value="${name}">${esc(name)}</option>`).join('')}`;
   overlay.innerHTML = `<div class="modal result-modal"><h2>🤝 Propose a trade</h2><p>Heroes, Wealth, and stored goods move only if the other mayor accepts. An empty side means a gift or request.</p><div class="trade-form"><label class="field">RIVAL CITY<select id="trade-target">${rivals.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('')}</select></label><label class="field">HERO YOU GIVE<select id="trade-offer-hero"><option value="">None</option>${state.heroes.map(hero => `<option value="${hero.id}">${esc(hero.name)} · ${rarityLabel(hero.tier)}</option>`).join('')}</select></label><label class="field">HERO YOU ASK FOR<select id="trade-request-hero"></select></label><label class="field">WEALTH YOU GIVE<input class="input" id="trade-offer-wealth" type="number" min="0" max="20" value="0"></label><label class="field">WEALTH YOU ASK FOR<input class="input" id="trade-request-wealth" type="number" min="0" max="20" value="0"></label><label class="field">GOOD YOU GIVE<select id="trade-offer-good">${goodOptions}</select></label><label class="field">AMOUNT YOU GIVE<input class="input" id="trade-offer-good-amount" type="number" min="0" max="100" value="0"></label><label class="field">GOOD YOU ASK FOR<select id="trade-request-good">${goodOptions}</select></label><label class="field">AMOUNT YOU ASK FOR<input class="input" id="trade-request-good-amount" type="number" min="0" max="100" value="0"></label></div><div class="actions"><button class="secondary" id="cancel-trade">Cancel</button><button class="primary" id="confirm-trade">Send offer</button></div></div>`;
   document.body.appendChild(overlay);
-  const fillRequested = () => { byId('trade-request-hero').innerHTML = '<option value="">None</option>' + state.rivalHeroes.filter(hero => hero.city_id === byId('trade-target').value).map(hero => `<option value="${hero.id}">${esc(hero.name)} · ${rarityLabel(hero.tier)}</option>`).join(''); };
+  let rosterRequest = 0;
+  const fillRequested = async () => {
+    const cityId = byId('trade-target').value;
+    const requestNumber = ++rosterRequest;
+    const select = byId('trade-request-hero');
+    select.innerHTML = '<option value="">Loading Heroes…</option>';
+    select.disabled = true;
+    byId('confirm-trade').disabled = true;
+    try {
+      const result = await api(`/api/cities/${encodeURIComponent(cityId)}/heroes`);
+      if (requestNumber !== rosterRequest || !overlay.isConnected) return;
+      select.innerHTML = '<option value="">None</option>' + result.heroes.map(hero => `<option value="${hero.id}">${esc(hero.name)} · ${rarityLabel(hero.tier)}</option>`).join('');
+    } catch (error) {
+      if (requestNumber !== rosterRequest || !overlay.isConnected) return;
+      select.innerHTML = '<option value="">Could not load Heroes</option>';
+      toast(error.message);
+    } finally {
+      if (requestNumber === rosterRequest && overlay.isConnected) {
+        select.disabled = false;
+        byId('confirm-trade').disabled = false;
+      }
+    }
+  };
   byId('trade-target').onchange = fillRequested;
   fillRequested();
   byId('cancel-trade').onclick = () => overlay.remove();
