@@ -261,7 +261,7 @@ function changeSection(title, values) {
 }
 function changeRows(changes) {
   if (!changes || !Object.keys(changes).length) return '<p class="empty">Exact before-and-after numbers were not recorded for this older event.</p>';
-  return `<div class="changes">${changeSection(`${changes.target_city || 'City'} stats`, changes.stats)}${changeSection('Stored goods', changes.goods)}${changeSection('This hour’s services', changes.services)}${changeSection('Personality traits', changes.traits)}${changeSection(`${changes.attacker_city || 'Attacker'} traits`, changes.attacker_traits)}${changeSection(`${changes.defender_city || 'Defender'} traits`, changes.defender_traits)}${changeSection('Heroes', changes.citizens)}${changeSection('Construction', changes.buildings)}${changeSection(`${changes.wallet_city || 'Mayor'} wallet`, changes.wallet)}${changeSection(`${changes.sender_name || 'Sender'} Wealth`, changes.sender_wallet)}${changeSection(`${changes.target_name || 'Receiver'} Wealth`, changes.target_wallet)}</div>`;
+  return `<div class="changes">${changeSection(`${changes.target_city || 'City'} stats`, changes.stats)}${changeSection('Stored goods', changes.goods)}${changeSection(`${changes.sender_name || 'Sender'} goods`, changes.sender_goods)}${changeSection(`${changes.target_name || 'Receiver'} goods`, changes.target_goods)}${changeSection('This hour’s services', changes.services)}${changeSection('Personality traits', changes.traits)}${changeSection(`${changes.attacker_city || 'Attacker'} traits`, changes.attacker_traits)}${changeSection(`${changes.defender_city || 'Defender'} traits`, changes.defender_traits)}${changeSection('Heroes', changes.citizens)}${changeSection('Construction', changes.buildings)}${changeSection(`${changes.wallet_city || 'Mayor'} wallet`, changes.wallet)}${changeSection(`${changes.sender_name || 'Sender'} Wealth`, changes.sender_wallet)}${changeSection(`${changes.target_name || 'Receiver'} Wealth`, changes.target_wallet)}</div>`;
 }
 
 function battleSamples(samples, chance, changes = {}) {
@@ -319,6 +319,8 @@ function researchPercent() {
   if (!state.research) return 0;
   return Math.max(0, Math.min(100, 100 * (Date.now()/1000 - state.research.started_at) / (state.research.ready_at - state.research.started_at)));
 }
+function goodsCost(cost) { return Object.entries(cost || {}).map(([name, amount]) => `${amount} ${name}`).join(' · '); }
+function hasGoods(cost) { return Object.entries(cost || {}).every(([name, amount]) => (state.economy?.goods?.[name] || 0) >= amount); }
 function techTreeView() {
   const known = new Set(state.me.tech_nodes);
   const lookup = Object.fromEntries(state.techTree.map(node => [node.id,node]));
@@ -326,10 +328,10 @@ function techTreeView() {
   const nodes = visible.map(node => {
     const owned = known.has(node.id), researching = state.research?.node_id === node.id;
     const missing = node.requires.filter(id => !known.has(id)).map(id => lookup[id]?.name || id);
-    const ready = !state.research && !owned && !missing.length && state.me.tech >= node.tech && state.me.cash >= node.cost;
-    const status = researching ? 'Researching' : owned ? 'Completed' : ready ? 'Ready now' : missing.length ? `First complete: ${missing.join(', ')}` : state.me.tech < node.tech ? `Need ${node.tech} Tech` : state.me.cash < node.cost ? `Need ${node.cost} Cash` : 'Finish current research';
+    const ready = !state.research && !owned && !missing.length && state.me.tech >= node.tech && state.me.cash >= node.cost && hasGoods(node.goods_cost);
+    const status = researching ? 'Researching' : owned ? 'Completed' : ready ? 'Ready now' : missing.length ? `First complete: ${missing.join(', ')}` : state.me.tech < node.tech ? `Need ${node.tech} Tech` : state.me.cash < node.cost ? `Need ${node.cost} Cash` : !hasGoods(node.goods_cost) ? `Need ${goodsCost(node.goods_cost)}` : 'Finish current research';
     const requirements = node.requires.map(id => lookup[id]?.name || id).join(', ') || 'None';
-    return `<div class="research-row ${owned ? 'owned' : ready ? 'ready' : 'locked'}"><span class="research-marker" aria-hidden="true">${owned ? '✓' : researching ? '◉' : '•'}</span><div class="research-info"><strong>${esc(node.name)}</strong><span>${esc(node.effect)}</span><small>Requires: ${esc(requirements)} · Tech ${node.tech} · ${node.cost} Cash</small><em>${esc(status)}</em>${researching ? `<div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div><small>Done in <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span></small>` : ''}</div><button class="cast" ${ready ? '' : 'disabled'} onclick="researchNode('${node.id}')">${ready ? 'Start research' : researching ? 'In progress' : owned ? 'Done' : 'Locked'}</button></div>`;
+    return `<div class="research-row ${owned ? 'owned' : ready ? 'ready' : 'locked'}"><span class="research-marker" aria-hidden="true">${owned ? '✓' : researching ? '◉' : '•'}</span><div class="research-info"><strong>${esc(node.name)}</strong><span>${esc(node.effect)}</span><small>Requires: ${esc(requirements)} · Tech ${node.tech} · ${node.cost} Cash${goodsCost(node.goods_cost) ? ` · ${goodsCost(node.goods_cost)}` : ''}</small><em>${esc(status)}</em>${researching ? `<div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div><small>Done in <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span></small>` : ''}</div><button class="cast" ${ready ? '' : 'disabled'} onclick="researchNode('${node.id}')">${ready ? 'Start research' : researching ? 'In progress' : owned ? 'Done' : 'Locked'}</button></div>`;
   }).join('');
   return `<p class="progress-note">Start with <b>Officially a City</b> in Commerce. Select a branch, then press <b>Start research</b> on a ready item. Completed research unlocks the next items.</p><div class="tree-legend"><span>${known.size} / ${state.techTree.length} complete</span><span>🟢 Ready</span><span>○ Locked</span></div><div class="tree-jumps">${['Commerce','Science','Food','Culture','Construction'].map(branch => `<button class="secondary ${state.techBranch === branch ? 'selected' : ''}" onclick="jumpTech('${branch}')">${branch}</button>`).join('')}</div>${state.research ? `<div class="surface research-active"><b>🔬 Researching ${esc(lookup[state.research.node_id]?.name || state.research.node_id)}</b><span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span><div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div></div>` : ''}<div class="research-list">${nodes}</div>`;
 }
@@ -337,21 +339,13 @@ function techTreeView() {
 function economyView() {
   const economy = state.economy;
   if (!economy) return '<p>Inventory is loading.</p>';
-  const goods = Object.entries(economy.goods).map(([name, amount]) => `<div class="economy-item"><strong>${esc(name)}</strong><b>${amount}</b><small>${economy.per_hour[name] ? `+${economy.per_hour[name]} each hour` : 'Stored until used'}</small></div>`).join('');
-  const services = Object.entries(economy.services).map(([name, amount]) => `<div class="economy-item service"><strong>${esc(name)}</strong><b>${amount}</b><small>Expires this hour</small></div>`).join('');
-  const recipes = economy.recipes.map(item => {
-    const inputs = [...Object.entries(item.goods).map(([name, amount]) => `${amount} ${name}`), ...Object.entries(item.services).map(([name, amount]) => `${amount} ${name} service`)].join(' + ');
-    const output = item.makes ? Object.entries(item.makes).map(([name, amount]) => `${amount} ${name}`).join(', ') : item.makes_services ? Object.entries(item.makes_services).map(([name, amount]) => `${amount} ${name} service`).join(', ') : `+${item.amount} ${item.stat}`;
-    return `<div class="research-row"><div class="research-info"><strong>${esc(item.name)}</strong><small>Uses ${esc(inputs)}</small><span>Makes ${esc(output)}</span></div><button class="cast" ${item.available ? '' : 'disabled'} onclick="useRecipe('${item.id}')">Make</button></div>`;
-  }).join('');
+  const goods = Object.entries(economy.goods).map(([name, amount]) => `<div class="economy-item"><strong>${esc(name)}</strong><b>${amount}</b><small>${economy.per_hour[name] ? `+${economy.per_hour[name]} raw each hour` : 'Made automatically; stored until used'}</small></div>`).join('');
+  const report = economy.last_production || {};
+  const services = Object.entries(economy.services_per_hour).map(([name, amount]) => `<div class="economy-item service"><strong>${esc(name)}</strong><b>+${amount}/hr</b><small>Automatically used for production; leftovers expire</small></div>`).join('');
+  const changes = Object.entries(report.goods_change || {}).filter(([,amount]) => amount).map(([name,amount]) => `<span class="chip">${amount > 0 ? '+' : ''}${amount} ${esc(name)}</span>`).join(' ');
   const learned = Object.entries(state.alienWords).map(([word, meaning]) => `<span class="chip">${word} = ${esc(meaning)}</span>`).join(' ');
-  return `<div class="section-head"><div><h2>Goods & services</h2><p>Citizens produce grain, timber, and ore every hour. Stored goods can become new goods or city improvements.</p></div></div><h3>Stored goods</h3><div class="economy-grid">${goods}</div><h3>Services available now</h3><p class="progress-note">Citizens produce care, craft, and insight each hour. Use them before <span data-countdown="${economy.next_services_at}">${clock(economy.next_services_at)}</span>; unused services disappear when the next hour starts.</p><div class="economy-grid">${services}</div><h3>Make something</h3><div class="research-list">${recipes}</div><details class="surface alien-dictionary"><summary>Alien words learned: ${Object.keys(state.alienWords).length}</summary><p>Acquire an unfamiliar event or person to learn one word. Learned words appear in English throughout your city.</p>${learned || '<p>No words learned yet.</p>'}</details>`;
+  return `<div class="section-head"><div><h2>Goods & services</h2><p>Your citizens handle production on their own. Goods stay here until spent on buildings, research, or trades. Next batch in <span data-countdown="${economy.next_production_at}">${clock(economy.next_production_at)}</span>.</p></div></div><h3>Stored goods</h3><div class="economy-grid">${goods}</div><h3>Hourly services</h3><p class="progress-note">Care cooks meals, craft makes tools and planks, and insight creates research notes. Citizens use them automatically. Any unused services expire each hour.</p><div class="economy-grid">${services}</div><div class="surface"><strong>Last production run${report.hours ? ` · ${report.hours} hour${report.hours === 1 ? '' : 's'}` : ''}</strong><p>${changes || 'The next production batch is coming.'}</p>${report.hours ? `<small>Services used: ${Object.entries(report.services_used || {}).map(([name, amount]) => `${amount} ${name}`).join(', ')}. Leftover services expired.</small>` : ''}</div><details class="surface alien-dictionary"><summary>Alien words learned: ${Object.keys(state.alienWords).length}</summary><p>Acquire an unfamiliar event or person to learn one word. Learned words appear in English throughout your city.</p>${learned || '<p>No words learned yet.</p>'}</details>`;
 }
-
-window.useRecipe = async id => {
-  try { const result = await api('/api/economy/use', {method:'POST', body:JSON.stringify({recipe_id:id})}); await refresh(true); toast(result.title + ' complete'); }
-  catch (error) { toast(error.message); }
-};
 
 function buildingPerk(item) {
   const bonuses = Object.entries(item.daily || {}).map(([name, amount]) => `+${amount} ${name} each city day`);
@@ -372,7 +366,7 @@ function specializationCards() {
 function buildingCards() {
   const slotsFull = state.buildings.length >= state.me.building_slots;
   const built = state.buildings.map(item => `<div class="card building-card built"><div class="event-icon">${item.icon}</div><div class="card-main"><span class="chip">BUILT</span><h3>${esc(item.name)}</h3><p>${esc(item.description)}</p><div class="effect-preview">${esc(buildingPerk(item))}</div></div></div>`).join('');
-  const plans = state.buildingOffers.map(item => `<div class="card building-card"><div class="event-icon">${item.icon}</div><div class="card-main"><h3>${esc(item.name)}</h3><p>${esc(item.description)}</p><div class="effect-preview">${esc(buildingPerk(item))}</div><div class="meta"><span class="cost">💰 ${item.cost} Wealth</span><button class="cast" ${slotsFull || state.me.wealth < item.cost ? 'disabled' : ''} onclick="buildCity('${item.id}')">Construct →</button></div></div></div>`).join('');
+  const plans = state.buildingOffers.map(item => `<div class="card building-card"><div class="event-icon">${item.icon}</div><div class="card-main"><h3>${esc(item.name)}</h3><p>${esc(item.description)}</p><div class="effect-preview">${esc(buildingPerk(item))}</div><div class="meta"><span class="cost">💰 ${item.cost} Wealth · 📦 ${goodsCost(item.goods_cost)}</span><button class="cast" ${slotsFull || state.me.wealth < item.cost || !hasGoods(item.goods_cost) ? 'disabled' : ''} onclick="buildCity('${item.id}')">Construct →</button></div></div></div>`).join('');
   return built + plans || '<p class="empty">New building plans are on the way.</p>';
 }
 
@@ -403,18 +397,18 @@ function tradeCards() {
   if (!state.trades.length) return '<p class="empty">No offers yet. Invite a rival city to sign a very official napkin.</p>';
   return state.trades.map(item => {
     const incoming = item.target_id === state.me.id;
-    const first = [item.offer_hero_name && `🧑‍🚀 ${item.offer_hero_name}`, item.offer_wealth && `💰 ${item.offer_wealth} Wealth`].filter(Boolean).join(' + ') || 'nothing';
-    const second = [item.request_hero_name && `🧑‍🚀 ${item.request_hero_name}`, item.request_wealth && `💰 ${item.request_wealth} Wealth`].filter(Boolean).join(' + ') || 'nothing';
+    const first = [item.offer_hero_name && `🧑‍🚀 ${item.offer_hero_name}`, item.offer_wealth && `💰 ${item.offer_wealth} Wealth`, item.offer_good_amount && `📦 ${item.offer_good_amount} ${item.offer_good}`].filter(Boolean).join(' + ') || 'nothing';
+    const second = [item.request_hero_name && `🧑‍🚀 ${item.request_hero_name}`, item.request_wealth && `💰 ${item.request_wealth} Wealth`, item.request_good_amount && `📦 ${item.request_good_amount} ${item.request_good}`].filter(Boolean).join(' + ') || 'nothing';
     return `<div class="trade-card"><div><span class="chip">${esc(item.status.toUpperCase())}</span><h3>${esc(item.sender_name)} ↔ ${esc(item.target_name)}</h3><p>${esc(item.sender_name)} gives <b>${esc(first)}</b><br>${esc(item.target_name)} gives <b>${esc(second)}</b></p><small>${item.status === 'pending' ? `Expires in <span data-countdown="${item.expires_at}">${clock(item.expires_at)}</span>` : 'Offer closed'}</small></div>${item.status === 'pending' ? `<div class="trade-actions">${incoming ? `<button class="primary" onclick="respondTrade('${item.id}','accept')">Accept</button>` : ''}<button class="secondary" onclick="respondTrade('${item.id}','close')">${incoming ? 'Decline' : 'Cancel'}</button></div>` : ''}</div>`;
   }).join('');
 }
 
 function glossaryView() {
   const sections = [
-    ['Getting started', 'Your mayor owns one city. Start with City to see your supplies. Town Hall has daily rewards. Chaos uses hourly tokens for events. Goods stores what citizens produce. In Research, open Commerce and press Start research on City Charter. Heroes holds your equipped team. Battles and Trades connect you to other mayors.'],
+    ['Getting started', 'Your mayor owns one city. Start with City to see your supplies. Town Hall has daily rewards. Chaos uses hourly tokens for events. Goods shows what citizens produce automatically. In Research, open Commerce and press Start research on Officially a City. Heroes holds your equipped team. Battles and Trades connect you to other mayors.'],
     ['Town Hall', 'Weather changes daily Food and Morale, even while you are away. Check in for Cash and grow a daily streak. Complete three rotating goals, claim permanent achievements, choose one decree, host a festival, open a Shard crate, train a citizen, or send one friendly gift each day. City rankings compare population first, then Tech. The server enforces all costs and limits.'],
     ['Citizens', 'The population living in your city. Food shortages can make it shrink; good morale helps it grow. Citizens produce goods and services each hour. Heroes are individual characters you can equip in limited slots.'],
-    ['Goods and services', 'Goods stay in your city inventory until used. Citizens produce grain, timber, and ore hourly. Recipes turn these into planks, tools, and meals, or city stat boosts. Care, craft, and insight are services: they can power recipes only during the current hour. Unused services disappear when the next hour begins.'],
+    ['Goods and services', 'Citizens automatically produce grain, timber, and ore each hour. Their care, craft, and insight services automatically turn some surplus goods into meals, planks, tools, and research notes. Unused services expire every hour. Stored goods stay until spent on buildings, research, or trades. You do not need to make anything manually.'],
     ['Alien words', 'About 3% of new events and people may carry a word from an unfamiliar language. When you play that event or acquire that person, your city learns the word. From then on, that word appears in English for your city.'],
     ['Wealth', 'A city resource used to build special buildings and start battles. Each point also produces 0.02 Cash per hour. Wealth and Cash are separate.'],
     ['Cash', 'Money earned each hour from base income, Wealth, research, and upgrades. Spend Cash on research nodes, shop upgrades, and some class changes.'],
@@ -425,10 +419,10 @@ function glossaryView() {
     ['Anomaly Shards and Reality Cores', 'Rare currencies earned from city incidents. Higher weirdness unlocks more powerful events that may use them.'],
     ['Weirdness and reality drift', 'The city’s unusual side unfolds across 90 real days. The progress bar shows when its next level can unlock. Its skyline and colors move through one of 72 visual paths.'],
     ['Traits', 'Your city has 320 individual personality scores in ten groups. Search and sort them in Traits. Battles randomly sample twenty, so a younger city can challenge an older one.'],
-    ['Research and upgrades', 'Open the Commerce branch and press Start research on Officially a City first. Each row shows its earlier requirements, Tech score, Cash cost, and effect. One project runs at a time; its progress bar and timer appear in the row. Shop upgrades spend Cash and can increase growth or add hero and building slots.'],
+    ['Research and upgrades', 'Open the Commerce branch and press Start research on Officially a City first. Each row shows earlier requirements, Tech score, Cash cost, research-note cost, and effect. One project runs at a time; its progress bar and timer appear in the row. Shop upgrades spend Cash and can increase growth or add hero and building slots.'],
     ['Heroes and buildings', 'Events can bring in Heroes. Only equipped Heroes provide daily stat bonuses, battle power, and defense. Guard helps defense, Rally buffs other equipped Heroes, and Focus strengthens sampled traits. An ally race in the fight adds a team bonus. Buildings are permanent buffs: their daily stat or defense bonuses continue after construction. Each city starts with one hero slot and one building plot.'],
     ['Battles', 'A challenge costs Wealth. Twenty random traits and five resident race duels affect the odds, limited to 35–65%. A resident deals double damage to their preferred enemy race. The winner moves a few trait points and sometimes recruits one of the loser’s heroes. Buildings and city specialization may add defense. A city can receive six hostile events in 24 hours, counting both battles and Chaos Token attacks.'],
-    ['Trades', 'Offer Wealth or a hero to another mayor. They must accept before anything moves. Offers expire after 48 hours. You can send ten proposals per 24 hours, at most four to one rival; canceled offers still count.'],
+    ['Trades', 'Offer Wealth, stored goods, or a Hero to another mayor. They must accept before anything moves. Goods balances are checked again on acceptance. Offers expire after 48 hours. You can send ten proposals per 24 hours, at most four to one rival; canceled offers still count.'],
   ];
   return `<div class="section-head"><div><h2>Getting started & glossary</h2><p>A plain language guide to the city and its rules.</p></div></div><div class="glossary-list">${sections.map(([title,body],index) => `<details class="surface" ${index===0 ? 'open' : ''}><summary>${esc(title)}</summary><p>${esc(body)}</p></details>`).join('')}</div>`;
 }
@@ -479,7 +473,7 @@ function render() {
     <p class="progress-note">Every city starts with one plot. Buy more through the Research shop.</p>
     ` : ''}
     ${state.page === 'research' ? `
-    <div class="section-head"><div><h2>Research</h2><p>Choose a branch and press Start research on an available discovery. Tech opens it; Cash pays for it.</p></div><span class="chip">🛸 ${city.tech} Tech · 💵 ${city.cash.toFixed(2)} Cash</span></div>
+    <div class="section-head"><div><h2>Research</h2><p>Choose a branch and press Start research on an available discovery. Tech opens it; Cash and research notes pay for it.</p></div><span class="chip">🛸 ${city.tech} Tech · 💵 ${city.cash.toFixed(2)} Cash · 📝 ${state.economy?.goods?.notes || 0} notes</span></div>
     ${techTreeView()}
     <div class="section-head"><div><h2>Upgrade shop</h2><p>Cash comes from Wealth every hour. Upgrades increase passive growth or buy more slots.</p></div></div>
     <div class="cards">${shopCards()}</div>
@@ -491,7 +485,7 @@ function render() {
     <div class="surface battle-panel"><div><strong>⚔️ Challenge another city</strong><p class="muted">Costs ${city.battle_cost} Wealth. Challengers rest 4 hours; new cities and recent defenders get 1 hour of protection. You can challenge the same city twice per 24 hours. A city can receive at most ${city.incoming_attack_limit || 6} hostile events in 24 hours.</p></div><button class="cast" onclick="startBattle()" ${clock(city.next_battle_at) !== 'ready' || city.wealth < city.battle_cost || !rivals.some(item => attackable(item) && (state.pairAttacks[item.id] || 0) < state.pairBattleLimit) ? 'disabled' : ''}>Choose a rival →</button></div>
     ` : ''}
     ${state.page === 'trades' ? `
-    <div class="section-head"><div><h2>City-to-city trades</h2><p>Propose a citizen swap, a Wealth exchange, or a gift. The other mayor must accept before anything moves.</p></div><button class="cast" onclick="showTradeProposal()" ${rivals.some(item => (state.tradeQuota.pair_sent_today?.[item.id] || 0) < (state.tradeQuota.pair_daily_limit || 4)) && (state.tradeQuota.sent_today || 0) < (state.tradeQuota.daily_limit || 10) ? '' : 'disabled'}>Propose a trade →</button></div>
+    <div class="section-head"><div><h2>City-to-city trades</h2><p>Offer stored goods, Heroes, Wealth, or a gift. The other mayor must accept before anything moves.</p></div><button class="cast" onclick="showTradeProposal()" ${rivals.some(item => (state.tradeQuota.pair_sent_today?.[item.id] || 0) < (state.tradeQuota.pair_daily_limit || 4)) && (state.tradeQuota.sent_today || 0) < (state.tradeQuota.daily_limit || 10) ? '' : 'disabled'}>Propose a trade →</button></div>
     <div class="surface"><p class="progress-note">Sent ${state.tradeQuota.sent_today || 0}/${state.tradeQuota.daily_limit || 10} proposals in the past 24 hours; up to ${state.tradeQuota.pair_daily_limit || 4} per rival. Up to three may be open at once. Offers expire after 48 hours. Citizens moving to another city enter its reserve roster.</p><div class="trade-list">${tradeCards()}</div></div>
     ` : ''}
     ${state.page === 'log' ? `
@@ -563,6 +557,7 @@ window.researchNode = id => {
   if (owned.has(id)) { toast('Already researched'); return; }
   if (state.me.tech < node.tech || !node.requires.every(item => owned.has(item))) { toast(`Need Tech ${node.tech} and earlier connected research`); return; }
   if (state.me.cash < node.cost) { toast('Not enough Cash'); return; }
+  if (!hasGoods(node.goods_cost)) { toast(`Need ${goodsCost(node.goods_cost)}`); return; }
   api('/api/research', {method:'POST', body:JSON.stringify({node_id:id})}).then(() => refresh(true)).catch(error => toast(error.message));
 };
 
@@ -715,7 +710,8 @@ window.showTradeProposal = () => {
   if (!rivals.length) return;
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';
-  overlay.innerHTML = `<div class="modal result-modal"><h2>🤝 Propose a trade</h2><p>Citizens and Wealth move only if the other mayor accepts. An empty side means a gift or request.</p><div class="trade-form"><label class="field">RIVAL CITY<select id="trade-target">${rivals.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('')}</select></label><label class="field">CITIZEN YOU GIVE<select id="trade-offer-hero"><option value="">None</option>${state.heroes.map(hero => `<option value="${hero.id}">${esc(hero.name)} · ${rarityLabel(hero.tier)}</option>`).join('')}</select></label><label class="field">CITIZEN YOU ASK FOR<select id="trade-request-hero"></select></label><label class="field">WEALTH YOU GIVE<input class="input" id="trade-offer-wealth" type="number" min="0" max="20" value="0"></label><label class="field">WEALTH YOU ASK FOR<input class="input" id="trade-request-wealth" type="number" min="0" max="20" value="0"></label></div><div class="actions"><button class="secondary" id="cancel-trade">Cancel</button><button class="primary" id="confirm-trade">Send offer</button></div></div>`;
+  const goodOptions = `<option value="">None</option>${Object.keys(state.economy?.goods || {}).map(name => `<option value="${name}">${esc(name)}</option>`).join('')}`;
+  overlay.innerHTML = `<div class="modal result-modal"><h2>🤝 Propose a trade</h2><p>Heroes, Wealth, and stored goods move only if the other mayor accepts. An empty side means a gift or request.</p><div class="trade-form"><label class="field">RIVAL CITY<select id="trade-target">${rivals.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('')}</select></label><label class="field">HERO YOU GIVE<select id="trade-offer-hero"><option value="">None</option>${state.heroes.map(hero => `<option value="${hero.id}">${esc(hero.name)} · ${rarityLabel(hero.tier)}</option>`).join('')}</select></label><label class="field">HERO YOU ASK FOR<select id="trade-request-hero"></select></label><label class="field">WEALTH YOU GIVE<input class="input" id="trade-offer-wealth" type="number" min="0" max="20" value="0"></label><label class="field">WEALTH YOU ASK FOR<input class="input" id="trade-request-wealth" type="number" min="0" max="20" value="0"></label><label class="field">GOOD YOU GIVE<select id="trade-offer-good">${goodOptions}</select></label><label class="field">AMOUNT YOU GIVE<input class="input" id="trade-offer-good-amount" type="number" min="0" max="100" value="0"></label><label class="field">GOOD YOU ASK FOR<select id="trade-request-good">${goodOptions}</select></label><label class="field">AMOUNT YOU ASK FOR<input class="input" id="trade-request-good-amount" type="number" min="0" max="100" value="0"></label></div><div class="actions"><button class="secondary" id="cancel-trade">Cancel</button><button class="primary" id="confirm-trade">Send offer</button></div></div>`;
   document.body.appendChild(overlay);
   const fillRequested = () => { byId('trade-request-hero').innerHTML = '<option value="">None</option>' + state.rivalHeroes.filter(hero => hero.city_id === byId('trade-target').value).map(hero => `<option value="${hero.id}">${esc(hero.name)} · ${rarityLabel(hero.tier)}</option>`).join(''); };
   byId('trade-target').onchange = fillRequested;
@@ -725,8 +721,12 @@ window.showTradeProposal = () => {
     if (state.busy) return;
     const offer_wealth = Number(byId('trade-offer-wealth').value), request_wealth = Number(byId('trade-request-wealth').value);
     if (![offer_wealth,request_wealth].every(value => Number.isInteger(value) && value >= 0 && value <= 20)) { toast('Wealth amounts must be between 0 and 20'); return; }
-    const payload = {target_city_id:byId('trade-target').value,offer_hero_id:byId('trade-offer-hero').value || null,request_hero_id:byId('trade-request-hero').value || null,offer_wealth,request_wealth};
-    if (!payload.offer_hero_id && !payload.request_hero_id && !offer_wealth && !request_wealth) { toast('Add a citizen or Wealth to the offer'); return; }
+    const offer_good = byId('trade-offer-good').value, request_good = byId('trade-request-good').value;
+    const offer_good_amount = Number(byId('trade-offer-good-amount').value), request_good_amount = Number(byId('trade-request-good-amount').value);
+    if (![offer_good_amount,request_good_amount].every(value => Number.isInteger(value) && value >= 0 && value <= 100) || Boolean(offer_good) !== Boolean(offer_good_amount) || Boolean(request_good) !== Boolean(request_good_amount)) { toast('Choose a good and amount together (1–100).'); return; }
+    if (offer_good_amount > (state.economy?.goods?.[offer_good] || 0)) { toast('You do not have that many goods.'); return; }
+    const payload = {target_city_id:byId('trade-target').value,offer_hero_id:byId('trade-offer-hero').value || null,request_hero_id:byId('trade-request-hero').value || null,offer_wealth,request_wealth,offer_good,offer_good_amount,request_good,request_good_amount};
+    if (!payload.offer_hero_id && !payload.request_hero_id && !offer_wealth && !request_wealth && !offer_good_amount && !request_good_amount) { toast('Add a Hero, Wealth, or goods to the offer'); return; }
     state.busy = true; byId('confirm-trade').disabled = true;
     try { await api('/api/trades', {method:'POST',body:JSON.stringify(payload)}); overlay.remove(); await refresh(true); toast('Trade offer sent'); }
     catch (error) { toast(error.message); byId('confirm-trade').disabled = false; }

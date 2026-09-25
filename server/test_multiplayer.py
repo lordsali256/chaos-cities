@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory() as folder:
     assert client.post("/api/events", json={"event_id": "daily-cap-offer", "target_city_id": target_id}, headers=heads[1]).status_code == 409
     with main.database() as db:
         for index in range(main.TRADE_PAIR_DAILY_LIMIT - 1):
-            db.execute("INSERT INTO trade_offers VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            db.execute("INSERT INTO trade_offers (id,sender_id,target_id,offer_hero_id,request_hero_id,offer_wealth,request_wealth,status,created_at,expires_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (f"pair-{index}", first["city"]["id"], target_id, None, None, 0, 1,
                         "canceled", now, now + 3600, now))
     quota = client.get("/api/trades", headers=heads[0]).json()
@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as folder:
     assert client.post("/api/trades", json={"target_city_id": target_id, "request_wealth": 1}, headers=heads[0]).status_code == 429
     with main.database() as db:
         for index in range(main.TRADE_DAILY_LIMIT - main.TRADE_PAIR_DAILY_LIMIT):
-            db.execute("INSERT INTO trade_offers VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            db.execute("INSERT INTO trade_offers (id,sender_id,target_id,offer_hero_id,request_hero_id,offer_wealth,request_wealth,status,created_at,expires_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (f"total-{index}", first["city"]["id"], second["city"]["id"], None, None, 0, 1,
                         "canceled", now, now + 3600, now))
     quota = client.get("/api/trades", headers=heads[0]).json()

@@ -55,8 +55,10 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Twelve game pages fit a fixed two-row navigation on a phone without a horizontal scrollbar.
 - [x] Research shows visible start buttons, costs, prerequisites, and active countdowns in readable branch lists.
 - [x] Player-facing game text calls special people Heroes and describes buildings as permanent buffs.
-- [x] Citizens earn stored goods hourly and expiring care, craft, and insight services; recipes turn goods into other goods, services, and stat gains.
+- [x] Citizens earn stored goods and temporary care, craft, and insight services each hour.
 - [x] Rare alien words appear on about 3% of new chaos choices, city incidents, and people; each city learns a word when it acquires the item or event.
+- [x] Citizens automatically turn hourly goods and expiring services into meals, planks, tools, and research notes; players no longer craft by hand.
+- [x] Buildings and research consume stored goods alongside their existing currencies, and players can trade goods with friends.
 
 ## Verify and polish
 
@@ -77,5 +79,5 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 ## Decisions still open
 
 - Cash prices and hourly income are first-pass balancing values.
-- Tech research costs Cash and requires a Tech score and connected prerequisite nodes.
+- Tech research costs Cash and, after the starting node, research notes; it requires a Tech score and connected prerequisite nodes.
 - Existing player cities keep previously equipped heroes and built buildings, so their slot count may be greater than a new city's starting count.

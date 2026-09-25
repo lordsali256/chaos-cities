@@ -1,5 +1,6 @@
 """Run in the server container: python test_rules.py. Uses a temporary database."""
 import os
+import json
 import tempfile
 import time
 
@@ -63,7 +64,7 @@ with tempfile.TemporaryDirectory() as folder:
     assert finish_research()["research"] is None
     assert client.post("/api/shop", json={"item_id": "income"}, headers=head).status_code == 200
     with main.database() as db:
-        db.execute("UPDATE cities SET tech=65,cash=500,wealth=100,specialization_changed_at=? WHERE id=?", (now-86400, city_id))
+        db.execute("UPDATE cities SET tech=65,cash=500,wealth=100,goods=?,specialization_changed_at=? WHERE id=?", (json.dumps({"notes": 20, "meals": 5}), now-86400, city_id))
     switched = client.post("/api/specializations", json={"specialization_id": "roof_astronomers"}, headers=head)
     assert switched.status_code == 200 and switched.json()["city"]["cash"] == 475
     assert switched.json()["city"]["growth_rates"]["tech"] == .005

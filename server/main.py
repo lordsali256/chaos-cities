@@ -182,20 +182,31 @@ SHOP = [
 SHOP_BY_ID = {item["id"]: item for item in SHOP}
 
 # Goods survive between visits. Services belong to the current hour only.
-GOODS = ("grain", "timber", "ore", "planks", "tools", "meals")
+GOODS = ("grain", "timber", "ore", "planks", "tools", "meals", "notes")
 SERVICES = ("care", "craft", "insight")
-RECIPES = {
-    "saw_planks": {"name": "Saw planks", "goods": {"timber": 2}, "services": {"craft": 1}, "makes": {"planks": 1}},
-    "forge_tools": {"name": "Forge tools", "goods": {"timber": 1, "ore": 1}, "services": {"craft": 1}, "makes": {"tools": 1}},
-    "cook_meals": {"name": "Cook meals", "goods": {"grain": 2}, "services": {"care": 1}, "makes": {"meals": 2}},
-    "share_meal": {"name": "Feed volunteers", "goods": {"meals": 1}, "services": {}, "makes_services": {"care": 1}},
-    "equip_crews": {"name": "Equip work crews", "goods": {"tools": 1}, "services": {}, "makes_services": {"craft": 2}},
-    "study_ore": {"name": "Study strange ore", "goods": {"ore": 2}, "services": {}, "makes_services": {"insight": 1}},
-    "serve_feast": {"name": "Serve a feast", "goods": {"meals": 2}, "services": {"care": 1}, "stat": "food", "amount": 3},
-    "repair_market": {"name": "Repair market stalls", "goods": {"planks": 1, "tools": 1}, "services": {"craft": 1}, "stat": "wealth", "amount": 2},
-    "run_workshop": {"name": "Run a workshop", "goods": {"tools": 1}, "services": {"insight": 1}, "stat": "tech", "amount": 2},
-    "community_supper": {"name": "Host a community supper", "goods": {"meals": 1}, "services": {"care": 1}, "stat": "morale", "amount": 3},
+BUILDING_GOODS = {
+    "pantry": {"meals": 2}, "bazaar": {"planks": 1},
+    "workshop": {"tools": 1}, "theater": {"meals": 1, "planks": 1},
+    "bastion": {"tools": 2},
 }
+
+
+def research_goods(node):
+    return {} if node["id"] == "city_charter" else {"notes": min(5, max(1, node["tech"] // 30))}
+
+
+def goods_balance(city):
+    stored = json.loads(city["goods"])
+    return {key: max(0, int(stored.get(key, 0))) for key in GOODS}
+
+
+def transfer_goods_balance(city, costs):
+    goods = goods_balance(city)
+    if any(goods.get(key, 0) < amount for key, amount in costs.items()):
+        raise HTTPException(409, "Not enough stored goods")
+    for key, amount in costs.items():
+        goods[key] -= amount
+    return goods
 
 ALIEN_WORDS = {"Zhaaru": "neighbor", "Vektil": "festival", "Qoruun": "visitor", "Nuvaxi": "garden", "Threll": "market", "Ozzari": "friend", "Kivora": "dream", "Yeluun": "hero", "Dravik": "machine", "Suveth": "home", "Phaali": "star", "Wekora": "soup"}
 
@@ -353,6 +364,7 @@ def init_db():
             "specialization_changed_at": "INTEGER NOT NULL DEFAULT 0",
             "renamed_at": "INTEGER NOT NULL DEFAULT 0",
             "goods": "TEXT NOT NULL DEFAULT '{}'",
+            "production_report": "TEXT NOT NULL DEFAULT '{}'",
         }.items():
             if name not in city_columns:
                 db.execute(f"ALTER TABLE cities ADD COLUMN {name} {definition}")
@@ -389,6 +401,13 @@ def init_db():
         for table in ("chaos_offers", "heroes", "prepared_heroes", "residents"):
             if "alien_word" not in {row[1] for row in db.execute(f"PRAGMA table_info({table})")}:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN alien_word TEXT NOT NULL DEFAULT ''")
+        trade_columns = {row[1] for row in db.execute("PRAGMA table_info(trade_offers)")}
+        for name, definition in {
+            "offer_good": "TEXT NOT NULL DEFAULT ''", "offer_good_amount": "INTEGER NOT NULL DEFAULT 0",
+            "request_good": "TEXT NOT NULL DEFAULT ''", "request_good_amount": "INTEGER NOT NULL DEFAULT 0",
+        }.items():
+            if name not in trade_columns:
+                db.execute(f"ALTER TABLE trade_offers ADD COLUMN {name} {definition}")
 
 
 init_db()
@@ -454,6 +473,10 @@ class TradeRequest(BaseModel):
     request_hero_id: str | None = None
     offer_wealth: int = Field(default=0, ge=0, le=20)
     request_wealth: int = Field(default=0, ge=0, le=20)
+    offer_good: str = ""
+    offer_good_amount: int = Field(default=0, ge=0, le=100)
+    request_good: str = ""
+    request_good_amount: int = Field(default=0, ge=0, le=100)
 
 
 class HallAction(BaseModel):
@@ -575,10 +598,39 @@ def current_services(db, city, now):
 
 def economy_view(db, city, now):
     goods = {key: max(0, int(json.loads(city["goods"]).get(key, 0))) for key in GOODS}
-    services = current_services(db, city, now)
     hourly = {"grain": max(1, city["population"] // 50), "timber": max(1, city["population"] // 80), "ore": max(1, city["population"] // 120)}
-    recipes = [dict(id=key, **recipe, available=all(goods.get(k, 0) >= v for k, v in recipe["goods"].items()) and all(services[k] >= v for k, v in recipe["services"].items()) and all(services[k] + v <= 99 for k, v in recipe.get("makes_services", {}).items()) and ("stat" not in recipe or city[recipe["stat"]] < STAT_LIMITS[recipe["stat"]][1])) for key, recipe in RECIPES.items()]
-    return {"goods": goods, "services": services, "per_hour": hourly, "next_services_at": (now // 3600 + 1) * 3600, "recipes": recipes}
+    return {"goods": goods, "services_per_hour": service_allowance(city), "per_hour": hourly,
+            "next_production_at": city["last_income"] + 3600,
+            "last_production": json.loads(city["production_report"])}
+
+
+def automatic_production(goods, city, hours):
+    """Apply each elapsed hour in order; services never carry into the next hour."""
+    goods = {key: max(0, int(goods.get(key, 0))) for key in GOODS}
+    before = goods.copy()
+    allowance = service_allowance(city)
+    used = {key: 0 for key in SERVICES}
+    lost = {key: 0 for key in SERVICES}
+    raw = {"grain": max(1, city["population"] // 50), "timber": max(1, city["population"] // 80), "ore": max(1, city["population"] // 120)}
+    for hour in range(hours):
+        for key, amount in raw.items():
+            goods[key] = min(9999, goods[key] + amount)
+        service = allowance.copy()
+        if goods["grain"] >= 4 and goods["meals"] <= 9997 and service["care"]:
+            goods["grain"] -= 2; goods["meals"] += 2; service["care"] -= 1
+        if (city["last_income"] // 3600 + hour) % 3 == 0 and goods["timber"] >= 3 and goods["ore"] >= 2 and goods["tools"] < 9999 and service["craft"]:
+            goods["timber"] -= 1; goods["ore"] -= 1; goods["tools"] += 1; service["craft"] -= 1
+        elif goods["timber"] >= 4 and goods["planks"] < 9999 and service["craft"]:
+            goods["timber"] -= 2; goods["planks"] += 1; service["craft"] -= 1
+        if goods["ore"] >= 3 and goods["notes"] < 9999 and service["insight"]:
+            goods["ore"] -= 1; goods["notes"] += 1; service["insight"] -= 1
+        for key in SERVICES:
+            used[key] += allowance[key] - service[key]
+            lost[key] += service[key]
+    report = {"hours": hours, "goods_change": {key: goods[key] - before[key] for key in GOODS},
+              "services_produced": {key: allowance[key] * hours for key in SERVICES},
+              "services_used": used, "services_expired": lost}
+    return goods, report
 
 
 def city_bonuses(city, nodes=None):
@@ -620,11 +672,9 @@ def daily_tick(db, city, now):
             values[stat] = min(STAT_LIMITS[stat][1], values[stat] + whole)
             bank[stat] = 0 if values[stat] >= STAT_LIMITS[stat][1] else round(accrued - whole, 6)
         hourly_cash = round((.1 + .02 * city["wealth"] + bonuses["cash_flat"]) * (1 + .15 * levels.get("income", 0) + bonuses["cash_multiplier"]), 4)
-        goods = json.loads(city["goods"])
-        for key, amount in (("grain", max(1, city["population"] // 50)), ("timber", max(1, city["population"] // 80)), ("ore", max(1, city["population"] // 120))):
-            goods[key] = min(9999, goods.get(key, 0) + amount * income_hours)
-        db.execute("UPDATE cities SET cash=ROUND(cash+?,4),last_income=?,growth_bank=?,goods=?,food=?,morale=?,tech=?,wealth=? WHERE id=?",
-                   (hourly_cash * income_hours, city["last_income"] + 3600 * income_hours, json.dumps(bank), json.dumps(goods), values["food"], values["morale"], values["tech"], values["wealth"], city["id"]))
+        goods, report = automatic_production(json.loads(city["goods"]), city, income_hours)
+        db.execute("UPDATE cities SET cash=ROUND(cash+?,4),last_income=?,growth_bank=?,goods=?,production_report=?,food=?,morale=?,tech=?,wealth=? WHERE id=?",
+                   (hourly_cash * income_hours, city["last_income"] + 3600 * income_hours, json.dumps(bank), json.dumps(goods), json.dumps(report), values["food"], values["morale"], values["tech"], values["wealth"], city["id"]))
         city = db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
     passed = min(365, max(0, (now - city["last_day"]) // DAY_SECONDS))
     if not passed:
@@ -763,8 +813,9 @@ def research(data: ResearchRequest, authorization: str | None = Header(None)):
             raise HTTPException(409, "This technology is not available yet")
         if city["cash"] < node["cost"]:
             raise HTTPException(409, "Not enough Cash")
+        goods = transfer_goods_balance(city, research_goods(node))
         now = int(time.time())
-        db.execute("UPDATE cities SET cash=ROUND(cash-?,4) WHERE id=?", (node["cost"], city["id"]))
+        db.execute("UPDATE cities SET cash=ROUND(cash-?,4),goods=? WHERE id=?", (node["cost"], json.dumps(goods), city["id"]))
         db.execute("INSERT INTO research_queue VALUES (?,?,?,?)", (city["id"], node["id"], now, now + research_duration(node)))
     return {"ok": True, "city": me(authorization)["city"]}
 
@@ -912,54 +963,12 @@ def me(authorization: str | None = Header(None)):
         for hero in heroes:
             hero["name"] = alien_name(hero["name"], hero["alien_word"])
         known_words = {row["word"]: ALIEN_WORDS[row["word"]] for row in db.execute("SELECT word FROM alien_knowledge WHERE city_id=?", (city["id"],)) if row["word"] in ALIEN_WORDS}
-        return {"city": private_city, "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"]), "economy": economy_view(db, city, int(time.time())), "alien_words": known_words}
+        return {"city": private_city, "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": [{**node, "goods_cost": research_goods(node)} for node in TECH_NODES], "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"]), "economy": economy_view(db, city, int(time.time())), "alien_words": known_words}
 
 
 @app.post("/api/economy/use")
 def use_recipe(data: RecipeRequest, authorization: str | None = Header(None)):
-    recipe = RECIPES.get(data.recipe_id)
-    if not recipe:
-        raise HTTPException(404, "Unknown recipe")
-    now = int(time.time())
-    with LOCK, database() as db:
-        city = daily_tick(db, auth(db, authorization), now)
-        services = current_services(db, city, now)
-        goods = {key: max(0, int(json.loads(city["goods"]).get(key, 0))) for key in GOODS}
-        if any(goods.get(key, 0) < amount for key, amount in recipe["goods"].items()) or any(services[key] < amount for key, amount in recipe["services"].items()):
-            raise HTTPException(409, "Not enough goods or current-hour services")
-        if "stat" in recipe and city[recipe["stat"]] >= STAT_LIMITS[recipe["stat"]][1]:
-            raise HTTPException(409, "That city stat is full")
-        if any(goods[key] + amount > 9999 for key, amount in recipe.get("makes", {}).items()):
-            raise HTTPException(409, "Goods storage is full")
-        if any(services[key] + amount > 99 for key, amount in recipe.get("makes_services", {}).items()):
-            raise HTTPException(409, "Too many services for this hour")
-        before_goods, before_services = goods.copy(), services.copy()
-        for key, amount in recipe["goods"].items():
-            goods[key] -= amount
-        for key, amount in recipe.get("makes", {}).items():
-            goods[key] += amount
-        for key, amount in recipe["services"].items():
-            services[key] -= amount
-        for key, amount in recipe.get("makes_services", {}).items():
-            services[key] += amount
-        db.execute("UPDATE city_services SET care=?,craft=?,insight=? WHERE city_id=?", (services["care"], services["craft"], services["insight"], city["id"]))
-        if "stat" in recipe:
-            stat = recipe["stat"]
-            after = min(STAT_LIMITS[stat][1], city[stat] + recipe["amount"])
-            db.execute(f"UPDATE cities SET goods=?,{stat}=? WHERE id=?", (json.dumps(goods), after, city["id"]))
-            changes = {"stats": {stat: change(city[stat], after)}}
-        else:
-            db.execute("UPDATE cities SET goods=? WHERE id=?", (json.dumps(goods), city["id"]))
-            changes = {"stats": {}}
-        changes["goods"] = {key: change(before_goods[key], goods[key]) for key in GOODS if before_goods[key] != goods[key]}
-        changes["services"] = {key: change(before_services[key], services[key]) for key in SERVICES if before_services[key] != services[key]}
-        title = recipe["name"]
-        story = f"The citizens of {city['name']} used today's services to {title.lower()}. The remaining services expire at the top of the hour."
-        log_id = str(uuid.uuid4())
-        db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (log_id, city["id"], city["id"], data.recipe_id, 1, story, "{}", now, "production", json.dumps(changes), title))
-        maybe_alien_log(db, log_id, city["id"])
-        updated = db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
-        return {"ok": True, "title": title, "story": story, "changes": changes, "economy": economy_view(db, updated, now)}
+    raise HTTPException(410, "Production now happens automatically each hour")
 
 
 def hall_state(db, city_id):
@@ -1216,7 +1225,8 @@ def cities(authorization: str | None = Header(None)):
 def trade_view(row):
     return {key: row[key] for key in ("id", "sender_id", "target_id", "sender_name", "target_name",
                                        "offer_hero_id", "request_hero_id", "offer_hero_name", "request_hero_name",
-                                       "offer_wealth", "request_wealth", "status", "created_at", "expires_at")}
+                                       "offer_wealth", "request_wealth", "offer_good", "offer_good_amount",
+                                       "request_good", "request_good_amount", "status", "created_at", "expires_at")}
 
 
 @app.get("/api/trades")
@@ -1238,11 +1248,15 @@ def list_trades(authorization: str | None = Header(None)):
 
 @app.post("/api/trades")
 def propose_trade(data: TradeRequest, authorization: str | None = Header(None)):
-    if not any((data.offer_hero_id, data.request_hero_id, data.offer_wealth, data.request_wealth)):
+    if not any((data.offer_hero_id, data.request_hero_id, data.offer_wealth, data.request_wealth, data.offer_good_amount, data.request_good_amount)):
         raise HTTPException(400, "A trade must offer or request something")
+    if (data.offer_good_amount > 0) != bool(data.offer_good) or (data.request_good_amount > 0) != bool(data.request_good):
+        raise HTTPException(400, "Choose a good and an amount together")
+    if (data.offer_good and data.offer_good not in GOODS) or (data.request_good and data.request_good not in GOODS):
+        raise HTTPException(400, "Unknown good")
     now = int(time.time())
     with LOCK, database() as db:
-        sender = auth(db, authorization)
+        sender = daily_tick(db, auth(db, authorization), now)
         if data.target_city_id == sender["id"]:
             raise HTTPException(400, "Choose another city")
         if not db.execute("SELECT 1 FROM cities WHERE id=?", (data.target_city_id,)).fetchone():
@@ -1263,8 +1277,10 @@ def propose_trade(data: TradeRequest, authorization: str | None = Header(None)):
                 raise HTTPException(409, "A selected citizen no longer belongs to that city")
         if sender["wealth"] < data.offer_wealth:
             raise HTTPException(409, "You do not have enough Wealth to offer")
+        if data.offer_good_amount and goods_balance(sender)[data.offer_good] < data.offer_good_amount:
+            raise HTTPException(409, "You do not have enough goods to offer")
         offer_id = str(uuid.uuid4())
-        db.execute("INSERT INTO trade_offers VALUES (?,?,?,?,?,?,?,?,?,?,?)", (offer_id, sender["id"], data.target_city_id, data.offer_hero_id, data.request_hero_id, data.offer_wealth, data.request_wealth, "pending", now, now+48*3600, 0))
+        db.execute("INSERT INTO trade_offers (id,sender_id,target_id,offer_hero_id,request_hero_id,offer_wealth,request_wealth,status,created_at,expires_at,resolved_at,offer_good,offer_good_amount,request_good,request_good_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (offer_id, sender["id"], data.target_city_id, data.offer_hero_id, data.request_hero_id, data.offer_wealth, data.request_wealth, "pending", now, now+48*3600, 0, data.offer_good, data.offer_good_amount, data.request_good, data.request_good_amount))
     return {"ok": True, "id": offer_id}
 
 
@@ -1281,6 +1297,20 @@ def accept_trade(offer_id: str, authorization: str | None = Header(None)):
         sender = daily_tick(db, db.execute("SELECT * FROM cities WHERE id=?", (offer["sender_id"],)).fetchone(), now)
         if sender["wealth"] < offer["offer_wealth"] or target["wealth"] < offer["request_wealth"]:
             raise HTTPException(409, "A city no longer has enough Wealth")
+        sender_goods, target_goods = goods_balance(sender), goods_balance(target)
+        sender_before, target_before = sender_goods.copy(), target_goods.copy()
+        if offer["offer_good_amount"] and sender_goods[offer["offer_good"]] < offer["offer_good_amount"]:
+            raise HTTPException(409, "Sender no longer has enough goods")
+        if offer["request_good_amount"] and target_goods[offer["request_good"]] < offer["request_good_amount"]:
+            raise HTTPException(409, "Receiver no longer has enough goods")
+        if offer["offer_good_amount"]:
+            sender_goods[offer["offer_good"]] -= offer["offer_good_amount"]
+            target_goods[offer["offer_good"]] += offer["offer_good_amount"]
+        if offer["request_good_amount"]:
+            target_goods[offer["request_good"]] -= offer["request_good_amount"]
+            sender_goods[offer["request_good"]] += offer["request_good_amount"]
+        if any(amount > 9999 for amount in (*sender_goods.values(), *target_goods.values())):
+            raise HTTPException(409, "Recipient goods storage is full")
         heroes = []
         for hero_id, owner in ((offer["offer_hero_id"], sender["id"]), (offer["request_hero_id"], target["id"])):
             if hero_id:
@@ -1288,8 +1318,8 @@ def accept_trade(offer_id: str, authorization: str | None = Header(None)):
                 if not hero:
                     raise HTTPException(409, "A selected citizen has moved to another city")
                 heroes.append(hero)
-        db.execute("UPDATE cities SET wealth=wealth-?+? WHERE id=?", (offer["offer_wealth"], offer["request_wealth"], sender["id"]))
-        db.execute("UPDATE cities SET wealth=wealth+?-? WHERE id=?", (offer["offer_wealth"], offer["request_wealth"], target["id"]))
+        db.execute("UPDATE cities SET wealth=wealth-?+?,goods=? WHERE id=?", (offer["offer_wealth"], offer["request_wealth"], json.dumps(sender_goods), sender["id"]))
+        db.execute("UPDATE cities SET wealth=wealth+?-?,goods=? WHERE id=?", (offer["offer_wealth"], offer["request_wealth"], json.dumps(target_goods), target["id"]))
         if offer["offer_hero_id"]:
             db.execute("UPDATE heroes SET city_id=?,slot=NULL WHERE id=?", (target["id"], offer["offer_hero_id"]))
             learn_alien_word(db, target["id"], next(hero["alien_word"] for hero in heroes if hero["id"] == offer["offer_hero_id"]))
@@ -1302,11 +1332,17 @@ def accept_trade(offer_id: str, authorization: str | None = Header(None)):
         pieces = [f"{hero['name']} changed cities" for hero in heroes]
         if offer["offer_wealth"] or offer["request_wealth"]:
             pieces.append(f"{offer['offer_wealth']} Wealth went to {target['name']} and {offer['request_wealth']} Wealth went to {sender['name']}")
+        if offer["offer_good_amount"]:
+            pieces.append(f"{offer['offer_good_amount']} {offer['offer_good']} went to {target['name']}")
+        if offer["request_good_amount"]:
+            pieces.append(f"{offer['request_good_amount']} {offer['request_good']} went to {sender['name']}")
         story = f"I am {target['name']}. {sender['name']} and I signed a very official napkin. " + "; ".join(pieces) + "."
         changes = {"target_city": target["name"], "wallet_city": target["name"], "stats": {}, "traits": {}, "wallet": {},
                    "sender_wallet": {"wealth": change(sender["wealth"], sender["wealth"] - offer["offer_wealth"] + offer["request_wealth"])},
                    "target_wallet": {"wealth": change(target["wealth"], target["wealth"] + offer["offer_wealth"] - offer["request_wealth"])},
                    "sender_name": sender["name"], "target_name": target["name"],
+                   "sender_goods": {key: change(sender_before[key], sender_goods[key]) for key in GOODS if sender_before[key] != sender_goods[key]},
+                   "target_goods": {key: change(target_before[key], target_goods[key]) for key in GOODS if target_before[key] != target_goods[key]},
                    "citizens": {hero["name"]: {"before": sender["name"] if hero["city_id"] == sender["id"] else target["name"], "after": target["name"] if hero["city_id"] == sender["id"] else sender["name"], "delta": 1} for hero in heroes}}
         log_id = str(uuid.uuid4())
         db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (log_id, sender["id"], target["id"], "city_trade", 1, story, "{}", now, "trade", json.dumps(changes), "The Very Official Napkin Trade"))
@@ -1423,7 +1459,8 @@ def building_offer_view(row):
     blueprint = BUILDING_BY_ID[row["blueprint_id"]]
     return {"id": row["id"], "blueprint_id": row["blueprint_id"], "name": row["title"],
             "description": row["tagline"], "icon": blueprint["icon"], "cost": blueprint["cost"],
-            "daily": blueprint["daily"], "defense": blueprint["defense"]}
+            "daily": blueprint["daily"], "defense": blueprint["defense"],
+            "goods_cost": BUILDING_GOODS[blueprint["id"]]}
 
 
 def building_view(row):
@@ -1808,11 +1845,14 @@ def construct_building(data: BuildRequest, authorization: str | None = Header(No
             raise HTTPException(409, "All building slots are full")
         if city["wealth"] < blueprint["cost"]:
             raise HTTPException(409, "Not enough Wealth")
+        before_goods = goods_balance(city)
+        goods = transfer_goods_balance(city, BUILDING_GOODS[blueprint["id"]])
         db.execute("INSERT INTO city_buildings VALUES (?,?,?,?,?,?)", (str(uuid.uuid4()), city["id"], blueprint["id"], offer["title"], offer["tagline"], now))
         db.execute("DELETE FROM prepared_buildings WHERE id=?", (offer["id"],))
-        db.execute("UPDATE cities SET wealth=wealth-? WHERE id=?", (blueprint["cost"], city["id"]))
+        db.execute("UPDATE cities SET wealth=wealth-?,goods=? WHERE id=?", (blueprint["cost"], json.dumps(goods), city["id"]))
         changes = {"target_city": city["name"], "wallet_city": city["name"], "stats": {}, "traits": {},
                    "wallet": {"wealth": change(city["wealth"], city["wealth"] - blueprint["cost"])},
+                   "goods": {key: change(before_goods[key], goods[key]) for key in BUILDING_GOODS[blueprint["id"]]},
                    "buildings": {offer["title"]: {"before": "planned", "after": "built", "delta": 1}}}
         story = f"I am {city['name']}. {offer['tagline']} The crew finished {offer['title']} and celebrated with a suspiciously tidy ribbon-cutting."
         log_id = str(uuid.uuid4())
