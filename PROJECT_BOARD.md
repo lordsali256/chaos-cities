@@ -43,6 +43,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Concurrent multiplayer tests cover simultaneous PvP attacks and trade acceptance against a temporary database.
 - [x] Edge-case tests confirm an underdog can win, trait totals are conserved, and unauthenticated or unrelated cities cannot use protected trade and battle actions.
 - [x] A live local-model story check found an early winner reveal; battle commentary now filters winner and loser spoilers until the reveal.
+- [x] A live local-model battle check now produces a varied scene and spoiler-free commentary; the server adds the verified winner and reward after the animation.
 - [x] Public deployment requires a private invite code and HTTPS game domain; its proxy sends basic security headers.
 - [x] SQLite online backup command checks integrity without stopping the game; a private host copy can be kept outside Git.
 - [x] City listings and event feeds require a city key; the standalone feed is limited to the signed-in city's events.

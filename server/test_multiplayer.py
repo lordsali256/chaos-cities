@@ -127,13 +127,16 @@ with tempfile.TemporaryDirectory() as folder:
         assert all(0 <= score <= 100 for score in strong.values())
 
     class SpoilerStory:
+        def __init__(self, scene="I am Talltown. The census was chaotic, but we settled it with a pretzel referendum."):
+            self.scene = scene
+
         def raise_for_status(self):
             pass
 
         def json(self):
             return {"message": {"content": main.json.dumps({
                 "title": "The Great Pretzel Census",
-                "story": "I am Talltown. The census was chaotic, but we settled it with a pretzel referendum.",
+                "story": self.scene,
                 "beats": ["The pretzel commission is counting every twist.",
                           "We win because the other city forgot its paperwork.",
                           "The defenders lost the contest before lunch."]})}}
@@ -147,6 +150,16 @@ with tempfile.TemporaryDirectory() as folder:
     finally:
         main.httpx.post = original_post
     assert story[2] == ["The pretzel commission is counting every twist."], story
+    assert story[1].endswith("Longshot won and claimed 2 trait points."), story
+
+    main.httpx.post = lambda *args, **kwargs: SpoilerStory("I am Talltown. Talltown won this battle already.")
+    try:
+        inaccurate = real_battle_story("Longshot", "Talltown", [
+            {"name": "Pretzel Policy", "attacker": 1, "defender": 99},
+            {"name": "Civic Humor", "attacker": 4, "defender": 96}], "Longshot", "2 trait points")
+    finally:
+        main.httpx.post = original_post
+    assert "Talltown won" not in inaccurate[1] and "Longshot won" in inaccurate[1], inaccurate
 
     main.PUBLIC_REGISTRATION_LIMIT = 2
     main.TRUST_PROXY_CLIENT_IP = True

@@ -1906,19 +1906,25 @@ def battle_story(actor, target, sampled, winner, reward):
     title = f"The {sampled[0]['name']} and {sampled[1]['name']} Incident"
     fallback = f"I am {target}. {actor} arrived with twenty arguments about my personality. {winner} won a ridiculous civic contest and claimed {reward}."
     try:
-        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 390, "temperature": 1.1}, "messages": [{"role": "system", "content": "Invent one unique funny G-rated city-versus-city event. Use the provided twenty traits and their scores to reflect BOTH city personalities. The result and reward are already decided; do not change them or invent more rewards. Answer JSON with short title, 2-sentence story spoken by the defending city in first person, and beats: six short funny live-commentary sentences for a battle animation. Beats must not reveal the winner or reward. No markdown."}, {"role": "user", "content": json.dumps({"attacker": actor, "defender": target, "twenty_traits": sampled, "winner": winner, "reward": reward, "nonce": secrets.token_hex(4)})}]}, timeout=18)
+        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 390, "temperature": 1.05}, "messages": [{"role": "system", "content": "Invent a unique, funny, G-rated scene for a city-versus-city contest, using the listed traits from both cities. The battle result is handled separately. Do not mention who wins, loses, or receives anything. Answer JSON with title, scene (one or two short sentences), and beats (six short live-commentary sentences). The beats must not reveal the result. No markdown."}, {"role": "user", "content": json.dumps({"attacker": actor, "defender": target, "twenty_traits": sampled, "nonce": secrets.token_hex(4)})}]}, timeout=18)
         response.raise_for_status()
         content = json.loads(response.json()["message"]["content"])
         proposed_title = str(content.get("title", "")).strip()[:90]
-        proposed_story = str(content.get("story", "")).strip()[:480]
-        if 8 <= len(proposed_title) <= 90 and 40 <= len(proposed_story) <= 480 and re.search(r"\b(I|my|me)\b", proposed_story, re.I) and safe_content(proposed_title, proposed_story):
+        scene = str(content.get("scene") or content.get("story", "")).strip()[:300]
+        outcome_words = r"\b(?:win(?:s|ning)?|won|winner|victor(?:y|ious)?|defeat(?:ed|s)?|lose|loses|lost|reward|stole|steal(?:s|ing)?|prevail(?:s|ed)?|trait points)\b"
+        if (8 <= len(proposed_title) <= 90 and 20 <= len(scene) <= 300
+                and safe_content(proposed_title, scene) and not re.search(outcome_words, scene, re.I)
+                and not re.search(r"\b\d+\b", scene)):
             with LOCK, database() as db:
                 digest = hashlib.sha256(proposed_title.casefold().encode()).hexdigest()
                 if not db.execute("SELECT 1 FROM used_content WHERE content_hash=?", (digest,)).fetchone():
                     db.execute("INSERT INTO used_content VALUES (?,?)", (digest, int(time.time())))
+                    opening = scene if re.search(r"\b(I|my|me)\b", scene, re.I) else f"I am {target}. {scene}"
+                    opening += "" if opening.endswith((".", "!", "?")) else "."
+                    story = f"{opening} {winner} won and claimed {reward}."
                     beats = [str(line).strip()[:140] for line in content.get("beats", []) if isinstance(line, str)]
-                    beats = [line for line in beats if 15 <= len(line) <= 140 and safe_content(line) and not re.search(r"\b(?:win(?:s|ning)?|won|winner|victor(?:y|ious)?|defeat(?:ed|s)?|lose|loses|lost|reward|stole|steal(?:s|ing)?|prevail(?:s|ed)?)\b", line, re.I)]
-                    return proposed_title, proposed_story, beats[:8]
+                    beats = [line for line in beats if 15 <= len(line) <= 140 and safe_content(line) and not re.search(outcome_words, line, re.I) and not re.search(r"\b\d+\s*(?:to|-|:)\s*\d+\b", line)]
+                    return proposed_title, story, beats[:8]
     except Exception:
         pass
     return title, fallback, []
