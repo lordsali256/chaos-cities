@@ -73,6 +73,32 @@ TIERS = ("white", "green", "blue", "purple", "orange")
 RARITY_LABELS = dict(zip(TIERS, ("Common", "Uncommon", "Rare", "Epic", "Legendary")))
 HERO_ROLES = ("guardian", "rallier", "specialist")
 HERO_TRAIT_DOMAIN = {"food": "Food", "wealth": "Market", "morale": "Civic", "tech": "Science"}
+HALL_WEATHER = (
+    {"name": "Clear skies", "icon": "☀️", "food": 1, "morale": 1},
+    {"name": "Helpful drizzle", "icon": "🌦️", "food": 2, "morale": 0},
+    {"name": "Stubborn fog", "icon": "🌫️", "food": 0, "morale": -1},
+    {"name": "Dry spell", "icon": "🌵", "food": -2, "morale": 0},
+    {"name": "Picnic breeze", "icon": "🍃", "food": 0, "morale": 2},
+    {"name": "Suspiciously polite rain", "icon": "☔", "food": 2, "morale": 1},
+)
+HALL_GOALS = (
+    {"id": "checkin", "name": "Open city hall", "hint": "Claim today's mayor check-in."},
+    {"id": "cast", "name": "Bend reality", "hint": "Use one Chaos event today."},
+    {"id": "battle", "name": "Challenge a rival", "hint": "Start one battle today."},
+    {"id": "trade", "name": "Sign a napkin", "hint": "Complete one trade today."},
+    {"id": "festival", "name": "Throw a festival", "hint": "Host today's city festival."},
+    {"id": "gift", "name": "Be a good neighbor", "hint": "Send one friendly gift today."},
+    {"id": "building", "name": "Build something odd", "hint": "Construct one special building today."},
+)
+HALL_ACHIEVEMENTS = (
+    {"id": "population", "name": "Room for Everybody", "hint": "Reach 110 citizens."},
+    {"id": "battles", "name": "Polite Menace", "hint": "Fight one battle."},
+    {"id": "trades", "name": "Napkin Diplomat", "hint": "Complete one trade."},
+    {"id": "heroes", "name": "Strange Entourage", "hint": "Recruit three special citizens."},
+    {"id": "buildings", "name": "Questionable Skyline", "hint": "Build two special buildings."},
+    {"id": "research", "name": "Probably Science", "hint": "Finish five research nodes."},
+    {"id": "weirdness", "name": "Zoning for Portals", "hint": "Reach 25 weirdness."},
+)
 OFFER_SECONDS = 6 * 3600
 UNSAFE_CONTENT = re.compile(r"\b(?:whack[ -]?off|fuck\w*|shit\w*|bitch\w*|dick\w*|cock\w*|porn\w*|rape\w*|suicid\w*|kill\s+yourself)\b", re.I)
 
@@ -247,6 +273,14 @@ def init_db():
         CREATE TABLE IF NOT EXISTS daily_taglines (
           city_id TEXT NOT NULL, day INTEGER NOT NULL, tagline TEXT NOT NULL,
           PRIMARY KEY(city_id,day));
+        CREATE TABLE IF NOT EXISTS hall_state (
+          city_id TEXT PRIMARY KEY, checkin_day INTEGER NOT NULL DEFAULT -1,
+          streak INTEGER NOT NULL DEFAULT 0, decree_day INTEGER NOT NULL DEFAULT -1,
+          festival_day INTEGER NOT NULL DEFAULT -1, crate_day INTEGER NOT NULL DEFAULT -1,
+          training_day INTEGER NOT NULL DEFAULT -1, gift_day INTEGER NOT NULL DEFAULT -1);
+        CREATE TABLE IF NOT EXISTS hall_claims (
+          city_id TEXT NOT NULL, kind TEXT NOT NULL, claim_key TEXT NOT NULL,
+          claimed_at INTEGER NOT NULL, PRIMARY KEY(city_id,kind,claim_key));
         """)
         city_columns = {row[1] for row in db.execute("PRAGMA table_info(cities)")}
         for name, definition in {
@@ -294,9 +328,9 @@ def init_db():
             if name not in offer_columns:
                 db.execute(f"ALTER TABLE chaos_offers ADD COLUMN {name} TEXT")
         hero_columns = {row[1] for row in db.execute("PRAGMA table_info(heroes)")}
-        for name in ("race", "ally_race"):
+        for name, definition in {"race": "TEXT NOT NULL DEFAULT ''", "ally_race": "TEXT NOT NULL DEFAULT ''", "training": "INTEGER NOT NULL DEFAULT 0"}.items():
             if name not in hero_columns:
-                db.execute(f"ALTER TABLE heroes ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+                db.execute(f"ALTER TABLE heroes ADD COLUMN {name} {definition}")
         for hero in db.execute("SELECT id FROM heroes WHERE race='' OR ally_race=''").fetchall():
             race = secrets.choice(RACES)
             ally = secrets.choice([item for item in RACES if item != race])
@@ -364,6 +398,15 @@ class TradeRequest(BaseModel):
     request_hero_id: str | None = None
     offer_wealth: int = Field(default=0, ge=0, le=20)
     request_wealth: int = Field(default=0, ge=0, le=20)
+
+
+class HallAction(BaseModel):
+    action: str
+    choice: str = ""
+    goal_id: str = ""
+    achievement_id: str = ""
+    hero_id: str = ""
+    target_city_id: str = ""
 
 
 def clean_name(value: str, lo: int, hi: int) -> str:
@@ -463,6 +506,12 @@ def city_bonuses(city, nodes=None):
     return result
 
 
+def hall_weather(city_id, day, weirdness):
+    digest = hashlib.sha256(f"weather:{city_id}:{day}".encode()).digest()
+    choices = HALL_WEATHER[:5] if weirdness < 25 else HALL_WEATHER
+    return choices[digest[0] % len(choices)]
+
+
 def daily_tick(db, city, now):
     active = db.execute("SELECT * FROM research_queue WHERE city_id=?", (city["id"],)).fetchone()
     if active and now >= active["ready_at"]:
@@ -513,7 +562,8 @@ def daily_tick(db, city, now):
         for stat, amount in BUILDING_BY_ID[building["blueprint_id"]]["daily"].items():
             hero_bonus[stat] += amount
     for day_index in range(passed):
-        food = max(0, min(200, food + 5 + food_skill // 12 + tech // 35 + hero_bonus["food"] - max(4, population // 12)))
+        weather = hall_weather(city["id"], (city["last_day"] + (day_index + 1) * DAY_SECONDS) // DAY_SECONDS, weirdness)
+        food = max(0, min(200, food + 5 + food_skill // 12 + tech // 35 + hero_bonus["food"] + weather["food"] - max(4, population // 12)))
         wealth = max(0, min(200, wealth + max(1, population // 20) + market_skill // 25 + hero_bonus["wealth"] - 4))
         tech = max(0, min(200, tech + hero_bonus["tech"]))
         if food < 5:
@@ -525,7 +575,7 @@ def daily_tick(db, city, now):
             morale = max(0, morale - 2)
         elif wealth >= 100:
             morale = min(100, morale + 1)
-        morale = min(100, morale + (1 if civic_skill >= 45 else 0) + hero_bonus["morale"])
+        morale = max(0, min(100, morale + (1 if civic_skill >= 45 else 0) + hero_bonus["morale"] + weather["morale"]))
         weirdness = min(weirdness_cap(city, city["last_day"] + (day_index + 1) * DAY_SECONDS), weirdness + 1)
     db.execute("UPDATE cities SET last_day=?,population=?,food=?,wealth=?,morale=?,tech=?,weirdness=? WHERE id=?", (city["last_day"] + passed * DAY_SECONDS, population, food, wealth, morale, tech, weirdness, city["id"]))
     return db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
@@ -775,6 +825,201 @@ def me(authorization: str | None = Header(None)):
         private_city = city_view(city, True)
         private_city.update(incoming_attacks_24h=incoming_attack_count(db, city["id"], int(time.time())), incoming_attack_limit=INCOMING_ATTACK_LIMIT)
         return {"city": private_city, "daily_tagline": daily_tagline(db, city, int(time.time())), "research": dict(active) if active else None, "phone_server_url": PHONE_SERVER_URL, "events": offers, "shop": shop_view(city), "tech_tree": TECH_NODES, "specializations": SPECIALIZATIONS, "buildings": buildings, "building_offers": building_offers, "next_offers_at": next_offers_at, "heroes": heroes, "residents": residents, "races": list(RACES), "feed": recent_feed(db, city["id"])}
+
+
+def hall_state(db, city_id):
+    db.execute("INSERT OR IGNORE INTO hall_state (city_id) VALUES (?)", (city_id,))
+    return db.execute("SELECT * FROM hall_state WHERE city_id=?", (city_id,)).fetchone()
+
+
+def hall_log(db, city, target, event_id, title, story, changes, now):
+    log_id = str(uuid.uuid4())
+    db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+               (log_id, city["id"], target["id"], event_id, 1, story, "{}", now, "hall", json.dumps(changes), title))
+    return log_id
+
+
+def hall_goal_done(db, city_id, day, goal_id, state):
+    if goal_id == "checkin":
+        return state["checkin_day"] == day
+    event = {"cast": ("cast", None), "battle": ("battle", None), "trade": ("trade", None),
+             "festival": ("hall", "city_festival"), "gift": ("hall", "neighbor_gift"), "building": ("building", None)}[goal_id]
+    return bool(db.execute("SELECT 1 FROM event_log WHERE actor_id=? AND created_at>=? AND created_at<? AND kind=? AND (? IS NULL OR event_id=?) LIMIT 1",
+                           (city_id, day * DAY_SECONDS, (day + 1) * DAY_SECONDS, event[0], event[1], event[1])).fetchone())
+
+
+def hall_view(db, city, now):
+    state = hall_state(db, city["id"])
+    day = now // DAY_SECONDS
+    digest = hashlib.sha256(f"goals:{city['id']}:{day}".encode()).digest()
+    optional = [goal for goal in HALL_GOALS if goal["id"] != "checkin"]
+    rotation = digest[0] % len(optional)
+    goals = [HALL_GOALS[0], optional[rotation], optional[(rotation + 3) % len(optional)]]
+    claims = {(row["kind"], row["claim_key"]) for row in db.execute("SELECT kind,claim_key FROM hall_claims WHERE city_id=?", (city["id"],))}
+    goal_view = [{**goal, "done": hall_goal_done(db, city["id"], day, goal["id"], state),
+                  "claimed": ("goal", f"{day}:{goal['id']}") in claims, "reward_cash": 4} for goal in goals]
+    counts = {
+        "battles": db.execute("SELECT COUNT(*) FROM event_log WHERE actor_id=? AND kind='battle'", (city["id"],)).fetchone()[0],
+        "trades": db.execute("SELECT COUNT(*) FROM event_log WHERE actor_id=? AND kind='trade'", (city["id"],)).fetchone()[0],
+        "heroes": db.execute("SELECT COUNT(*) FROM heroes WHERE city_id=?", (city["id"],)).fetchone()[0],
+        "buildings": db.execute("SELECT COUNT(*) FROM city_buildings WHERE city_id=?", (city["id"],)).fetchone()[0],
+    }
+    earned = {"population": city["population"] >= 110, "battles": counts["battles"] >= 1,
+              "trades": counts["trades"] >= 1, "heroes": counts["heroes"] >= 3,
+              "buildings": counts["buildings"] >= 2, "research": len(json.loads(city["tech_nodes"])) >= 5,
+              "weirdness": city["weirdness"] >= 25}
+    achievements = [{**item, "done": earned[item["id"]], "claimed": ("achievement", item["id"]) in claims,
+                     "reward_cash": 12} for item in HALL_ACHIEVEMENTS]
+    rankings = [dict(row) for row in db.execute("""SELECT c.id,c.name,c.population,c.weirdness,c.tech,
+                     COALESCE(b.battles,0) battles FROM cities c LEFT JOIN
+                     (SELECT actor_id,COUNT(*) battles FROM event_log WHERE kind='battle' GROUP BY actor_id) b ON b.actor_id=c.id""")]
+    rankings.sort(key=lambda row: (-row["population"], -row["tech"], row["name"]))
+    return {"day": day, "next_day_at": (day + 1) * DAY_SECONDS,
+            "weather": hall_weather(city["id"], day, city["weirdness"]),
+            "tomorrow_weather": hall_weather(city["id"], day + 1, city["weirdness"]),
+            "checkin_available": state["checkin_day"] != day, "streak": state["streak"],
+            "checkin_reward": 5 + min(7, state["streak"] + 1 if state["checkin_day"] == day - 1 else 1),
+            "decree_available": state["decree_day"] != day, "festival_available": state["festival_day"] != day,
+            "crate_available": state["crate_day"] != day, "training_available": state["training_day"] != day,
+            "gift_available": state["gift_day"] != day, "goals": goal_view, "achievements": achievements,
+            "rankings": rankings[:20], "my_rank": next((i + 1 for i, row in enumerate(rankings) if row["id"] == city["id"]), None),
+            "hero_training": [{"id": row["id"], "name": row["name"], "level": row["training"],
+                               "cost": 10 + 5 * row["training"]} for row in db.execute("SELECT id,name,training FROM heroes WHERE city_id=? ORDER BY slot IS NULL,slot,joined_at", (city["id"],))]}
+
+
+@app.get("/api/hall")
+def get_hall(authorization: str | None = Header(None)):
+    now = int(time.time())
+    with LOCK, database() as db:
+        city = daily_tick(db, auth(db, authorization), now)
+        return hall_view(db, city, now)
+
+
+@app.post("/api/hall/actions")
+def hall_action(data: HallAction, authorization: str | None = Header(None)):
+    now = int(time.time())
+    day = now // DAY_SECONDS
+    with LOCK, database() as db:
+        city = daily_tick(db, auth(db, authorization), now)
+        state = hall_state(db, city["id"])
+        title, story, target, changes = "", "", city, {}
+        if data.action == "checkin":
+            if state["checkin_day"] == day:
+                raise HTTPException(409, "Today's check-in is already claimed")
+            streak = state["streak"] + 1 if state["checkin_day"] == day - 1 else 1
+            reward = 5 + min(7, streak)
+            db.execute("UPDATE hall_state SET checkin_day=?,streak=? WHERE city_id=?", (day, streak, city["id"]))
+            db.execute("UPDATE cities SET cash=ROUND(cash+?,4) WHERE id=?", (reward, city["id"]))
+            title, story = "Mayor checked in", f"The mayor opened City Hall for day {streak} of the streak and collected {reward} Cash."
+            changes = {"wallet": {"cash": change(city["cash"], city["cash"] + reward)}}
+        elif data.action == "decree":
+            choices = {"pantry": ("food", 3, "Emergency Sandwich Decree"), "parade": ("morale", 3, "Mandatory Tiny Parade"),
+                       "market": ("wealth", 3, "Pocket Change Proclamation")}
+            if data.choice not in choices:
+                raise HTTPException(400, "Choose a valid decree")
+            if state["decree_day"] == day:
+                raise HTTPException(409, "Your city already made a decree today")
+            if city["cash"] < 3:
+                raise HTTPException(409, "A decree costs 3 Cash")
+            stat, amount, title = choices[data.choice]
+            after = min(STAT_LIMITS[stat][1], city[stat] + amount)
+            if after == city[stat]:
+                raise HTTPException(409, f"{stat.title()} is already full; choose another decree")
+            db.execute(f"UPDATE cities SET {stat}=?,cash=ROUND(cash-3,4) WHERE id=?", (after, city["id"]))
+            db.execute("UPDATE hall_state SET decree_day=? WHERE city_id=?", (day, city["id"]))
+            story = f"The mayor signed {title}. {stat.title()} rose by {after - city[stat]}."
+            changes = {"stats": {stat: change(city[stat], after)}, "wallet": {"cash": change(city["cash"], city["cash"] - 3)}}
+        elif data.action == "festival":
+            if state["festival_day"] == day:
+                raise HTTPException(409, "The city already held a festival today")
+            if city["cash"] < 10:
+                raise HTTPException(409, "A festival costs 10 Cash")
+            morale = min(100, city["morale"] + 5)
+            population = min(500, city["population"] + (1 if city["food"] > 35 else 0))
+            if morale == city["morale"] and population == city["population"]:
+                raise HTTPException(409, "Morale and population are already full")
+            db.execute("UPDATE cities SET cash=ROUND(cash-10,4),morale=?,population=? WHERE id=?", (morale, population, city["id"]))
+            db.execute("UPDATE hall_state SET festival_day=? WHERE city_id=?", (day, city["id"]))
+            title, story = "Festival of Dubious Ribbon Cutting", "Citizens held a festival, improved morale, and welcomed a neighbor if food was plentiful."
+            changes = {"stats": {"morale": change(city["morale"], morale), "population": change(city["population"], population)},
+                       "wallet": {"cash": change(city["cash"], city["cash"] - 10)}}
+        elif data.action == "crate":
+            if state["crate_day"] == day:
+                raise HTTPException(409, "Today's mystery crate is already open")
+            if city["shards"] < 1:
+                raise HTTPException(409, "A mystery crate costs one Shard")
+            possible = tuple(item for item in ("cash", "cash", "cash", "wealth", "food", "morale", "core")
+                             if item == "cash" or city[{"core": "cores"}.get(item, item)] < (999 if item == "core" else STAT_LIMITS[item][1]))
+            reward = secrets.choice(possible)
+            amount = 1 if reward == "core" else 8 if reward == "cash" else 4
+            field = "cores" if reward == "core" else reward
+            limit = 1000000 if field == "cash" else 200 if field in ("food", "wealth") else 100 if field == "morale" else 999
+            after = min(limit, city[field] + amount)
+            db.execute(f"UPDATE cities SET {field}=?,shards=shards-1 WHERE id=?", (after, city["id"]))
+            db.execute("UPDATE hall_state SET crate_day=? WHERE city_id=?", (day, city["id"]))
+            title, story = "The Very Questionable Crate", f"A crate yielded {after - city[field]} {reward.title()} and a suspiciously polite receipt."
+            changes = {"wallet": {"shards": change(city["shards"], city["shards"] - 1), reward: change(city[field], after)}}
+        elif data.action == "train":
+            if state["training_day"] == day:
+                raise HTTPException(409, "The training yard is closed until tomorrow")
+            hero = db.execute("SELECT * FROM heroes WHERE id=? AND city_id=?", (data.hero_id, city["id"])).fetchone()
+            if not hero:
+                raise HTTPException(404, "Citizen not found in your city")
+            if hero["training"] >= 5:
+                raise HTTPException(409, "This citizen has finished training")
+            cost = 10 + 5 * hero["training"]
+            if city["cash"] < cost:
+                raise HTTPException(409, f"Training costs {cost} Cash")
+            db.execute("UPDATE heroes SET training=training+1 WHERE id=?", (hero["id"],))
+            db.execute("UPDATE cities SET cash=ROUND(cash-?,4) WHERE id=?", (cost, city["id"]))
+            db.execute("UPDATE hall_state SET training_day=? WHERE city_id=?", (day, city["id"]))
+            title, story = "Advanced Napkin Combat", f"{hero['name']} trained to level {hero['training'] + 1} and gained one battle team power when equipped."
+            changes = {"wallet": {"cash": change(city["cash"], city["cash"] - cost)}}
+        elif data.action == "gift":
+            if state["gift_day"] == day:
+                raise HTTPException(409, "You already sent a friendly gift today")
+            if data.target_city_id == city["id"]:
+                raise HTTPException(400, "Choose another city")
+            target = db.execute("SELECT * FROM cities WHERE id=?", (data.target_city_id,)).fetchone()
+            if not target:
+                raise HTTPException(404, "Rival city not found")
+            if city["wealth"] < 2:
+                raise HTTPException(409, "A friendly gift costs 2 Wealth")
+            target = daily_tick(db, target, now)
+            gift_stat = "morale" if target["morale"] < 100 else "food"
+            after = min(STAT_LIMITS[gift_stat][1], target[gift_stat] + 2)
+            if after == target[gift_stat]:
+                raise HTTPException(409, "That city has full Morale and Food")
+            db.execute("UPDATE cities SET wealth=wealth-2 WHERE id=?", (city["id"],))
+            db.execute(f"UPDATE cities SET {gift_stat}=? WHERE id=?", (after, target["id"]))
+            db.execute("UPDATE hall_state SET gift_day=? WHERE city_id=?", (day, city["id"]))
+            title, story = "A Diplomatic Casserole", f"{city['name']} sent a casserole to {target['name']}. Their {gift_stat.title()} rose by {after - target[gift_stat]}."
+            changes = {"wallet": {"wealth": change(city["wealth"], city["wealth"] - 2)}, "stats": {gift_stat: change(target[gift_stat], after)}}
+        elif data.action in ("goal", "achievement"):
+            view = hall_view(db, city, now)
+            entries = view["goals"] if data.action == "goal" else view["achievements"]
+            item_id = data.goal_id if data.action == "goal" else data.achievement_id
+            item = next((entry for entry in entries if entry["id"] == item_id), None)
+            if not item or not item["done"] or item["claimed"]:
+                raise HTTPException(409, "This reward is not ready to claim")
+            claim_key = f"{day}:{item_id}" if data.action == "goal" else item_id
+            db.execute("INSERT INTO hall_claims VALUES (?,?,?,?)", (city["id"], data.action, claim_key, now))
+            db.execute("UPDATE cities SET cash=ROUND(cash+?,4) WHERE id=?", (item["reward_cash"], city["id"]))
+            title, story = "Town Hall reward", f"{item['name']} earned {item['reward_cash']} Cash. The clerk stamped the form with unnecessary flair."
+            changes = {"wallet": {"cash": change(city["cash"], city["cash"] + item["reward_cash"])}}
+        else:
+            raise HTTPException(400, "Unknown Town Hall action")
+        changes["target_city"] = target["name"]
+        changes["wallet_city"] = city["name"]
+        log_id = hall_log(db, city, target, "neighbor_gift" if data.action == "gift" else "city_festival" if data.action == "festival" else f"hall_{data.action}", title, story, changes, now)
+        updated = db.execute("SELECT * FROM cities WHERE id=?", (city["id"],)).fetchone()
+        result = {"ok": True, "title": title, "story": story, "changes": changes, "city": city_view(updated, True), "hall": hall_view(db, updated, now)}
+    if data.action in ("decree", "festival", "crate", "train", "gift"):
+        title, story = hall_story(city["name"], target["name"], result["title"], result["story"], changes)
+        with LOCK, database() as db:
+            db.execute("UPDATE event_log SET title=?,story=? WHERE id=?", (title, story, log_id))
+        result.update(title=title, story=story)
+    return result
 
 
 @app.post("/api/city/rename")
@@ -1433,6 +1678,29 @@ def construct_building(data: BuildRequest, authorization: str | None = Header(No
     return {"story": story, "changes": changes, "city": me(authorization)["city"]}
 
 
+def hall_story(city, target, fallback_title, fallback_story, changes):
+    try:
+        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False,
+            "format": "json", "options": {"num_predict": 170, "temperature": 1.15}, "messages": [
+                {"role": "system", "content": "Invent a unique funny G-rated Town Hall headline and a short first-person city diary entry about the action that happened just now. Answer JSON with title and story only. The server already applied the exact changes. Do not describe numbers, add rewards, change the outcome, or mention yesterday or tomorrow."},
+                {"role": "user", "content": json.dumps({"speaking_city": city, "neighbor_city": target, "action": fallback_title,
+                                               "what_happened": fallback_story, "exact_changes": changes, "nonce": secrets.token_hex(4)})}]}, timeout=16)
+        response.raise_for_status()
+        content = json.loads(response.json()["message"]["content"])
+        title = str(content.get("title", "")).strip().strip('"“”')
+        sentences = re.split(r"(?<=[.!?])\s+", str(content.get("story", "")).strip())
+        story = " ".join(sentences[:2]).strip()
+        if 8 <= len(title) <= 90 and 35 <= len(story) <= 480 and re.search(r"\b(I|my|me|we|our|us)\b", story, re.I) and not re.search(r"\d|\byesterday\b|\btomorrow\b", story, re.I) and safe_content(title, story):
+            digest = hashlib.sha256(("hall:" + title.casefold()).encode()).hexdigest()
+            with LOCK, database() as db:
+                if not db.execute("SELECT 1 FROM used_content WHERE content_hash=?", (digest,)).fetchone():
+                    db.execute("INSERT INTO used_content VALUES (?,?)", (digest, int(time.time())))
+                    return title, story
+    except Exception:
+        pass
+    return fallback_title, fallback_story
+
+
 def trade_story(sender, target, items, fallback):
     try:
         response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 160, "temperature": 1.05}, "messages": [{"role": "system", "content": "Invent a short funny G-rated headline and two-sentence story spoken by the receiving city in first person. Describe only the exact trade already completed. Do not add rewards or alter any item. JSON with title and story only."}, {"role": "user", "content": json.dumps({"sender_city": sender, "receiving_city": target, "actual_trade": items, "nonce": secrets.token_hex(4)})}]}, timeout=16)
@@ -1513,7 +1781,7 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         equipped_target = db.execute("SELECT * FROM heroes WHERE city_id=? AND slot IS NOT NULL", (target["id"],)).fetchall()
         def hero_power(heroes, fighters):
             present = {fighter["race"] for fighter in fighters} | {hero["race"] for hero in heroes}
-            return sum(1 + ("white", "green", "blue", "purple", "orange").index(hero["tier"]) + (3 if hero["ally_race"] in present else 0) for hero in heroes)
+            return sum(1 + TIERS.index(hero["tier"]) + hero["training"] + (3 if hero["ally_race"] in present else 0) for hero in heroes)
         attack_power = hero_power(equipped_actor, actor_fighters)
         defense_power = hero_power(equipped_target, target_fighters)
         selected = secrets.SystemRandom().sample(TRAIT_NAMES, 20)

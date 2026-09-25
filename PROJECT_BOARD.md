@@ -50,6 +50,8 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Repeated temporary-city playtest covers forty PvP battles, citizen transfers, trait conservation, and eight Wealth trades.
 - [x] Equipped citizens have stable Guard, Rally, or Focus combat roles; battle records show each citizen's actual contribution.
 - [x] A battle that transfers a special citizen immediately closes pending trade offers involving that citizen.
+- [x] Town Hall adds ten activities: weather, check-in streaks, daily goals, achievements, decrees, festivals, mystery crates, special citizen training, friendly gifts, and city rankings.
+- [x] Town Hall rewards, limits, offline weather effects, and cross-city gifts pass isolated rule checks.
 
 ## Verify and polish
 

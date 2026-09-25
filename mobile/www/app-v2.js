@@ -25,7 +25,7 @@ const realityStage = weirdness => Math.max(0, Math.min(11, Math.floor((Number(we
 const state = {
   server: localStorage.getItem('chaos_server') || location.origin,
   key: localStorage.getItem('chaos_key') || '',
-  me: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
+  me: null, hall: null, phoneServerUrl: '', cities: [], battleRecords: {}, pairAttacks: {}, pairBattleLimit: 2, events: [], feed: [], heroes: [], residents: [], buildings: [], buildingOffers: [], shop: [], techTree: [], specializations: [], trades: [], tradeQuota: {sent_today: 0, daily_limit: 10, pair_sent_today: {}, pair_daily_limit: 4}, rivalHeroes: [], nextOffersAt: 0, research: null, dailyTagline: '',
   eventTab: 'self', logTab: 'all', traitsOpen: false, traitSearch: '', traitCategory: 'All', traitSort: 'high', groupTraits: localStorage.getItem('chaos_group_traits') !== 'false',
   setupMode: 'new', page: 'city', busy: false, selectedTech: 'city_charter', techBranch: 'Commerce',
   googleClientId: '',
@@ -187,8 +187,9 @@ async function refresh(quiet = false) {
   const previousTradeIds = new Set(state.trades.map(item => item.id));
   const hadCity = Boolean(state.me);
   try {
-    const [mine, world, catalog, diplomacy] = await Promise.all([api('/api/me'), api('/api/cities'), api('/api/catalog'), api('/api/trades')]);
+    const [mine, world, catalog, diplomacy, hall] = await Promise.all([api('/api/me'), api('/api/cities'), api('/api/catalog'), api('/api/trades'), api('/api/hall')]);
     state.me = mine.city;
+    state.hall = hall;
     state.research = mine.research || null;
     state.dailyTagline = mine.daily_tagline || '';
     state.phoneServerUrl = mine.phone_server_url || '';
@@ -302,7 +303,7 @@ function traitRows() {
 function heroCards() {
   return Array.from({length: state.me.hero_slots}, (_, slot) => {
     const hero = state.heroes.find(item => item.slot === slot);
-    return `<div class="hero-card ${hero ? 'tier-' + esc(hero.tier) : 'empty-slot'}"><span class="rarity">SLOT ${slot+1}${hero ? ' · ' + rarityLabel(hero.tier).toUpperCase() : ''}</span><h3>${hero ? esc(hero.name) : 'Vacant hero chair'}</h3><p>${hero ? esc(hero.title) : 'Waiting for an extraordinary citizen.'}</p>${hero ? `<span class="muted">${esc(hero.race)} · +${1 + ['white','green','blue','purple','orange'].indexOf(hero.tier)} ${esc(hero.specialty)} each city day · Battle power and defense · Ally: ${esc(hero.ally_race)}<br><b>${esc(hero.ability?.effect || '')}</b></span>` : ''}<button class="secondary" onclick="showRoster(${slot})">${hero ? 'Change citizen' : 'Choose citizen'}</button></div>`;
+    return `<div class="hero-card ${hero ? 'tier-' + esc(hero.tier) : 'empty-slot'}"><span class="rarity">SLOT ${slot+1}${hero ? ' · ' + rarityLabel(hero.tier).toUpperCase() : ''}</span><h3>${hero ? esc(hero.name) : 'Vacant hero chair'}</h3><p>${hero ? esc(hero.title) : 'Waiting for an extraordinary citizen.'}</p>${hero ? `<span class="muted">${esc(hero.race)} · +${1 + ['white','green','blue','purple','orange'].indexOf(hero.tier)} ${esc(hero.specialty)} each city day · Training ${hero.training || 0}/5 · Battle power and defense · Ally: ${esc(hero.ally_race)}<br><b>${esc(hero.ability?.effect || '')}</b></span>` : ''}<button class="secondary" onclick="showRoster(${slot})">${hero ? 'Change citizen' : 'Choose citizen'}</button></div>`;
   }).join('');
 }
 
@@ -351,6 +352,29 @@ function buildingCards() {
   return built + plans || '<p class="empty">The city AI is sketching building plans.</p>';
 }
 
+function hallView() {
+  const hall = state.hall;
+  if (!hall) return '<p class="empty">Town Hall is opening. Try refreshing.</p>';
+  const rivals = state.cities.filter(item => item.id !== state.me.id);
+  const ready = (available, affordable, label, action, need = '') => `<button class="cast" ${available && affordable ? '' : 'disabled'} onclick="hallAction('${action}')">${!available ? 'Come back tomorrow' : affordable ? label : need}</button>`;
+  const goals = hall.goals.map(goal => `<div class="hall-item"><div><b>${esc(goal.name)}</b><small>${esc(goal.hint)} · +${goal.reward_cash} Cash</small></div><button class="secondary" ${!goal.done || goal.claimed ? 'disabled' : ''} onclick="hallAction('goal',{goal_id:'${esc(goal.id)}'})">${goal.claimed ? 'Claimed' : goal.done ? 'Claim' : 'In progress'}</button></div>`).join('');
+  const badges = hall.achievements.map(item => `<div class="hall-item"><div><b>${esc(item.name)}</b><small>${esc(item.hint)} · +${item.reward_cash} Cash</small></div><button class="secondary" ${!item.done || item.claimed ? 'disabled' : ''} onclick="hallAction('achievement',{achievement_id:'${esc(item.id)}'})">${item.claimed ? 'Earned' : item.done ? 'Claim badge' : 'Locked'}</button></div>`).join('');
+  const leaders = hall.rankings.map((item, index) => `<div class="hall-item"><div><b>${index + 1}. ${esc(item.name)}${item.id === state.me.id ? ' · you' : ''}</b><small>${item.population} citizens · ${item.tech} Tech · ${item.weirdness} weirdness · ${item.battles} battles</small></div></div>`).join('');
+  return `<div class="section-head"><div><h2>Town Hall</h2><p>Small decisions for the hours between Chaos Tokens. The clerk insists this is all very official.</p></div><span class="chip">New day in <span data-countdown="${hall.next_day_at}">${clock(hall.next_day_at)}</span></span></div>
+    <div class="hall-grid">
+      <section class="surface hall-card"><h3>🌤️ City weather</h3><p>${hall.weather.icon} <b>${esc(hall.weather.name)}</b> · ${numberDelta(hall.weather.food)} daily Food · ${numberDelta(hall.weather.morale)} daily Morale</p><small>Tomorrow: ${hall.tomorrow_weather.icon} ${esc(hall.tomorrow_weather.name)}. Weather affects the daily city simulation, including while you are away.</small></section>
+      <section class="surface hall-card"><h3>📅 Mayor check-in & streak</h3><p>${hall.streak} day streak · ${hall.checkin_available ? hall.checkin_reward + ' Cash today' : 'Collected today'}</p>${ready(hall.checkin_available,true,'Collect Cash','checkin')}</section>
+      <section class="surface hall-card"><h3>📋 Daily goals</h3><p>Three fresh jobs each day. Finish one, then claim its Cash.</p>${goals}</section>
+      <section class="surface hall-card"><h3>🏅 Achievements</h3><p>Permanent milestones with one-time Cash rewards.</p>${badges}</section>
+      <section class="surface hall-card"><h3>📜 Mayor decree</h3><p>Pick one daily rule for 3 Cash. Each adds up to 3 points now.</p><div class="hall-actions">${[['pantry','🥫 Pantry Patrol'],['parade','😊 Tiny Parade'],['market','💰 Pocket Change']].map(([id,label]) => `<button class="secondary" ${!hall.decree_available || state.me.cash < 3 ? 'disabled' : ''} onclick="hallAction('decree',{choice:'${id}'})">${label}</button>`).join('')}</div></section>
+      <section class="surface hall-card"><h3>🎉 City festival</h3><p>Spend 10 Cash for up to 5 Morale and a new citizen if Food is plentiful.</p>${ready(hall.festival_available,state.me.cash >= 10,'Host festival · 10 Cash','festival','Need 10 Cash')}</section>
+      <section class="surface hall-card"><h3>📦 Mystery crate</h3><p>Spend one Shard for a surprise: Cash, resources, or a rare Core.</p>${ready(hall.crate_available,state.me.shards >= 1,'Open crate · 1 Shard','crate','Need 1 Shard')}</section>
+      <section class="surface hall-card"><h3>🥊 Citizen training</h3><p>Train one special citizen per day. Each level adds one battle team power while equipped, up to level 5.</p><select id="hall-hero" aria-label="Citizen to train">${hall.hero_training.map(hero => `<option value="${esc(hero.id)}" ${hero.level >= 5 ? 'disabled' : ''}>${esc(hero.name)} · level ${hero.level}/5 · ${hero.cost} Cash</option>`).join('')}</select><button class="cast" ${!hall.training_available || !hall.hero_training.some(hero => hero.level < 5 && state.me.cash >= hero.cost) ? 'disabled' : ''} onclick="hallAction('train',{hero_id:byId('hall-hero').value})">Train citizen</button></section>
+      <section class="surface hall-card"><h3>🎁 Friendly gift</h3><p>Send a rival city +2 Morale, or +2 Food if Morale is full, for 2 Wealth once each day.</p><select id="hall-rival" aria-label="City to receive a gift">${rivals.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select><button class="cast" ${!hall.gift_available || !rivals.length || state.me.wealth < 2 ? 'disabled' : ''} onclick="hallAction('gift',{target_city_id:byId('hall-rival').value})">Send casserole</button></section>
+      <section class="surface hall-card"><h3>🏆 City rankings</h3><p>Your rank: ${hall.my_rank || '—'}. Population breaks ties with Tech.</p>${leaders}</section>
+    </div>`;
+}
+
 function tradeCards() {
   if (!state.trades.length) return '<p class="empty">No offers yet. Invite a rival city to sign a very official napkin.</p>';
   return state.trades.map(item => {
@@ -363,7 +387,8 @@ function tradeCards() {
 
 function glossaryView() {
   const sections = [
-    ['Getting started', 'Your mayor owns one city. Start with City to see your supplies, choose a specialization, and watch your city grow. Use Chaos Tokens in Chaos for events. Visit Research when you have Cash and enough Tech. Citizens holds your equipped special people. Battles and Trades connect your city to other mayors.'],
+    ['Getting started', 'Your mayor owns one city. Start with City to see your supplies, choose a specialization, and watch your city grow. Visit Town Hall for daily actions and rewards. Use Chaos Tokens in Chaos for events. Visit Research when you have Cash and enough Tech. Citizens holds your equipped special people. Battles and Trades connect your city to other mayors.'],
+    ['Town Hall', 'Weather changes daily Food and Morale, even while you are away. Check in for Cash and grow a daily streak. Complete three rotating goals, claim permanent achievements, choose one decree, host a festival, open a Shard crate, train a citizen, or send one friendly gift each day. City rankings compare population first, then Tech. The server enforces all costs and limits.'],
     ['Citizens', 'The population living in your city. Food shortages can make it shrink; good morale helps it grow. Special citizens are named heroes in limited equipment slots.'],
     ['Wealth', 'A city resource used to build special buildings and start battles. Each point also produces 0.02 Cash per hour. Wealth and Cash are separate.'],
     ['Cash', 'Money earned each hour from base income, Wealth, research, and upgrades. Spend Cash on research nodes, shop upgrades, and some class changes.'],
@@ -390,7 +415,7 @@ function render() {
   const rivals = state.cities.filter(item => item.id !== city.id);
   app.innerHTML = `<div class="shell">
     <header class="brand"><div class="logo"><div class="logo-mark">⚡</div>Chaos Cities</div><span class="pill">THE CITY IS LISTENING</span></header>
-    <nav class="main-nav" aria-label="Game pages">${[['city','🏙️ City'],['chaos','✨ Chaos'],['citizens','🧑‍🚀 Citizens'],['build','🏗️ Buildings'],['research','🧬 Research'],['battles','⚔️ Battles'],['trades','🤝 Trades'],['log','📜 Log'],['traits','🗂️ Traits'],['glossary','📖 Help']].map(([id,label]) => `<button class="tab ${state.page === id ? 'active' : ''}" onclick="setPage('${id}')">${label}</button>`).join('')}</nav>
+    <nav class="main-nav" aria-label="Game pages">${[['city','🏙️ City'],['hall','🏛️ Town Hall'],['chaos','✨ Chaos'],['citizens','🧑‍🚀 Citizens'],['build','🏗️ Buildings'],['research','🧬 Research'],['battles','⚔️ Battles'],['trades','🤝 Trades'],['log','📜 Log'],['traits','🗂️ Traits'],['glossary','📖 Help']].map(([id,label]) => `<button class="tab ${state.page === id ? 'active' : ''}" onclick="setPage('${id}')">${label}</button>`).join('')}</nav>
     <div class="quick-stats" aria-label="City resources">${[['👥','Citizens',city.population],['💰','Wealth',city.wealth],['🥫','Food',city.food],['😊','Morale',city.morale],['🛸','Tech',city.tech]].map(([icon,label,value]) => `<div title="${label}"><span>${icon} ${label}</span><strong>${value}</strong></div>`).join('')}</div>
     ${state.page === 'city' ? `
     <section class="hero"><div class="city-scene" aria-hidden="true"><div class="scene-sun"></div><div class="scene-cloud"></div><div class="scene-portal"></div><div class="scene-ground"></div><div class="scene-building one"></div><div class="scene-building two"></div><div class="scene-building three"></div><div class="scene-eye"></div></div><span class="eyebrow">${esc(city.owner_name)}'S GLORIOUS DISASTER</span><h1>${esc(city.name)}</h1><p>${esc(state.dailyTagline)}</p><button class="secondary rename-button" onclick="renameCity()">Rename city</button><span class="reality-label">${esc(pathName)} · Skyline ${stage + 1}/12 · ${esc(REALITY_STAGES[stage])}</span></section>
@@ -410,6 +435,7 @@ function render() {
     <div class="section-head"><div><h2>Reality drift</h2><p>Stranger events unlock gradually over ${city.drift.days_total} real days.</p></div><span class="chip">DAY ${city.drift.day} / ${city.drift.days_total}</span></div>
     <div class="surface"><div class="drift-top"><strong>Weirdness ${city.weirdness} / ${city.drift.cap} available now</strong><span>Next increase in <span data-countdown="${city.drift.next_ramp_at}">${clock(city.drift.next_ramp_at)}</span></span></div><div class="progress"><i style="width:${city.drift.progress}%"></i></div><p class="progress-note">${city.drift.progress}% of the 90-day journey · Full chaos ${new Date(city.drift.full_ramp_at * 1000).toLocaleDateString()}</p></div>
     ` : ''}
+    ${state.page === 'hall' ? hallView() : ''}
     ${state.page === 'chaos' ? `
     <div class="section-head"><div><h2>The chaos menu</h2><p>Your local AI prepares one-use choices. Used choices disappear and fresh ones arrive soon. Full refresh in <span data-countdown="${state.nextOffersAt}">${clock(state.nextOffersAt)}</span>.</p></div><div class="tabs"><button class="tab ${state.eventTab === 'self' ? 'active' : ''}" onclick="setEventTab('self')">✨ My city</button><button class="tab ${state.eventTab === 'attack' ? 'active' : ''}" onclick="setEventTab('attack')">💥 Attack</button></div></div>
     <div class="cards">${eventCards()}</div>
@@ -443,7 +469,7 @@ function render() {
     ` : ''}
     ${state.page === 'log' ? `
     <div class="section-head"><div><h2>City event log</h2><p>Ten recent entries per category. The local AI also picks weird incidents between player events.</p></div><button class="link" onclick="refresh()">Refresh ↻</button></div>
-    <div class="tabs log-tabs"><button class="tab ${state.logTab === 'all' ? 'active' : ''}" onclick="setLogTab('all')">All</button><button class="tab ${state.logTab === 'ambient' ? 'active' : ''}" onclick="setLogTab('ambient')">City AI</button><button class="tab ${state.logTab === 'hero' ? 'active' : ''}" onclick="setLogTab('hero')">Citizens</button><button class="tab ${state.logTab === 'cast' ? 'active' : ''}" onclick="setLogTab('cast')">Events</button><button class="tab ${state.logTab === 'battle' ? 'active' : ''}" onclick="setLogTab('battle')">Battles</button><button class="tab ${state.logTab === 'trade' ? 'active' : ''}" onclick="setLogTab('trade')">Trades</button></div>
+    <div class="tabs log-tabs"><button class="tab ${state.logTab === 'all' ? 'active' : ''}" onclick="setLogTab('all')">All</button><button class="tab ${state.logTab === 'ambient' ? 'active' : ''}" onclick="setLogTab('ambient')">City AI</button><button class="tab ${state.logTab === 'hero' ? 'active' : ''}" onclick="setLogTab('hero')">Citizens</button><button class="tab ${state.logTab === 'cast' ? 'active' : ''}" onclick="setLogTab('cast')">Events</button><button class="tab ${state.logTab === 'battle' ? 'active' : ''}" onclick="setLogTab('battle')">Battles</button><button class="tab ${state.logTab === 'trade' ? 'active' : ''}" onclick="setLogTab('trade')">Trades</button><button class="tab ${state.logTab === 'hall' ? 'active' : ''}" onclick="setLogTab('hall')">Town Hall</button></div>
     <div class="surface">${feedItems()}</div>
     ` : ''}
     ${state.page === 'traits' ? `
@@ -465,6 +491,16 @@ function render() {
 window.setEventTab = value => { state.eventTab = value; render(); };
 window.setLogTab = value => { state.logTab = value; render(); };
 window.setPage = value => { state.page = value; render(); window.scrollTo(0,0); };
+window.hallAction = async (action, details = {}) => {
+  if (state.busy) return;
+  state.busy = true;
+  try {
+    const result = await api('/api/hall/actions', {method:'POST', body:JSON.stringify({action,...details})});
+    await refresh(true);
+    resultModal(result.title, '🏛️', result.story, result.changes, 'Town Hall recorded this action.');
+  } catch (error) { toast(error.message); }
+  finally { state.busy = false; }
+};
 window.renameCity = () => {
   const name = prompt('New city name (3–28 letters, numbers, spaces, periods, apostrophes or hyphens):', state.me.name);
   if (name === null || name.trim() === state.me.name) return;
