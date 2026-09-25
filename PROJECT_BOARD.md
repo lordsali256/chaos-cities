@@ -43,6 +43,8 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] Concurrent multiplayer tests cover simultaneous PvP attacks and trade acceptance against a temporary database.
 - [x] Edge-case tests confirm an underdog can win, trait totals are conserved, and unauthenticated or unrelated cities cannot use protected trade and battle actions.
 - [x] A live local-model story check found an early winner reveal; battle commentary now filters winner and loser spoilers until the reveal.
+- [x] Public deployment requires a private invite code and HTTPS game domain; its proxy sends basic security headers.
+- [x] SQLite online backup command checks integrity without stopping the game; a private host copy can be kept outside Git.
 
 ## Verify and polish
 

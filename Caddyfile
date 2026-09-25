@@ -1,4 +1,9 @@
 {$GAME_DOMAIN} {
     encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+    }
     reverse_proxy server:8000
 }

@@ -44,17 +44,17 @@ Google account cities are separate from existing city-key cities in this first v
 ## Host for friends
 
 1. Copy this directory to a machine that runs Docker and can receive internet traffic. Keep the existing free-LLM stack on that same Docker host; the game joins its `free-llm-stack_private` network and calls Ollama locally. If you host the game alone, run `docker network create free-llm-stack_private`; the game still works with built-in event reports when Ollama is unavailable.
-2. Copy `.env.example` to `.env`. Set `GAME_DOMAIN` to a domain name whose DNS record points to your host. Set a private `INVITE_CODE` and give that code only to friends. Do not put the code in a public repository. `DAY_SECONDS=86400` means a real economy day and `TOKEN_SECONDS=3600` means one token hour. `AMBIENT_SECONDS` controls City AI incident cadence.
+2. Copy `.env.example` to `.env`. Set `GAME_DOMAIN` to a domain name whose DNS record points to your host. Set a private `INVITE_CODE` and give that code only to friends. The public Compose configuration refuses to start without both values and sets transfer QRs to `https://GAME_DOMAIN`. Do not put the code in a public repository. `DAY_SECONDS=86400` means a real economy day and `TOKEN_SECONDS=3600` means one token hour. `AMBIENT_SECONDS` controls City AI incident cadence.
 3. Forward public TCP ports 80 and 443 to that machine. Run `docker compose -f compose.yaml -f compose.public.yaml up -d --build` there. Caddy obtains and renews HTTPS certificates automatically. If the host already has a reverse proxy, use `docker compose up -d --build` and connect that proxy to the `chaos-cities_default` Docker network with upstream `server:8000`. A proxy running directly on the host can use `127.0.0.1:3010`.
-4. Friends install the APK and enter `https://<your-domain>` plus the invite code. Each installation saves one city key. The host should back up the `chaos-cities_game_data` Docker volume, which contains the SQLite database.
+4. Friends install the APK and enter `https://<your-domain>` plus the invite code. Each installation saves one city key. Back up the `chaos-cities_game_data` Docker volume, which contains the SQLite database. Run `docker compose exec -T server python backup_db.py` to make a consistent, integrity-checked copy under `/data/backups`, then copy that folder to a private location outside this Git repository with `docker compose cp server:/data/backups ../chaos-cities-private-backups`.
 
-The project does not publish your server automatically. This computer's `.env` binds the demo to its home network. On a public host, use HTTPS and set `PHONE_SERVER_URL` to that HTTPS address so transfer QRs point to it.
+The project does not publish your server automatically. This computer's `.env` binds the demo to its home network. The public Compose configuration supplies the HTTPS phone address automatically.
 
 ## Prototype limits
 
 - Google sign-in offers one city per Google account after configuration. City keys remain as a fallback and still allow additional cities, so a strict one-human-one-city policy is not yet enforced.
 - Invite code is shared and reusable. It keeps strangers out of small friend games but is not a full account system.
-- This is an Android debug APK. Before a larger public launch, add account recovery, rate limits, moderation tools, notifications, automated backups, and a release signing process.
+- This is an Android debug APK. Before a larger public launch, add account recovery, request rate limits, moderation tools, notifications, scheduled off-host backups, and a release signing process.
 - Trade offers are asynchronous; both mayors need to visit the app to propose and accept. Chaos Tokens are earned over time and cannot be bought.
 - Building and battle rules are prototype balancing values and may change after playtesting.
 - The 320 traits use new display names, but existing cities keep their original underlying weights and progress. The previous local database was backed up inside its Docker volume as `chaos-before-tech-tree.db` before this update.

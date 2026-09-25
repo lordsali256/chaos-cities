@@ -1,6 +1,10 @@
 # Use on a separate public host with DNS pointed at that host.
 # Do not enable this alongside another service already using ports 80/443.
 services:
+  server:
+    environment:
+      INVITE_CODE: ${INVITE_CODE:?Set a private INVITE_CODE in .env before public hosting}
+      PHONE_SERVER_URL: https://${GAME_DOMAIN:?Set GAME_DOMAIN in .env}
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped
