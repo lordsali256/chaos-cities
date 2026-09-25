@@ -71,6 +71,8 @@ TRADE_DAILY_LIMIT = 10
 TRADE_PAIR_DAILY_LIMIT = 4
 TIERS = ("white", "green", "blue", "purple", "orange")
 RARITY_LABELS = dict(zip(TIERS, ("Common", "Uncommon", "Rare", "Epic", "Legendary")))
+HERO_ROLES = ("guardian", "rallier", "specialist")
+HERO_TRAIT_DOMAIN = {"food": "Food", "wealth": "Market", "morale": "Civic", "tech": "Science"}
 OFFER_SECONDS = 6 * 3600
 UNSAFE_CONTENT = re.compile(r"\b(?:whack[ -]?off|fuck\w*|shit\w*|bitch\w*|dick\w*|cock\w*|porn\w*|rape\w*|suicid\w*|kill\s+yourself)\b", re.I)
 
@@ -395,6 +397,36 @@ def registration_identity(request: Request) -> str:
         except ValueError:
             pass
     return hashlib.sha256(f"{INVITE_CODE}|{address}".encode()).hexdigest()
+
+
+def hero_role(hero) -> str:
+    return HERO_ROLES[hashlib.sha256(hero["id"].encode()).digest()[0] % len(HERO_ROLES)]
+
+
+def hero_ability(hero) -> dict:
+    tier = 1 + TIERS.index(hero["tier"])
+    role = hero_role(hero)
+    descriptions = {
+        "guardian": f"Guard: +{tier * 2} defense power when your city is challenged.",
+        "rallier": f"Rally: +{tier} team power for each other equipped special citizen.",
+        "specialist": f"Focus: +{tier} trait power for each sampled {HERO_TRAIT_DOMAIN[hero['specialty']]} trait.",
+    }
+    return {"name": hero["title"], "role": role, "effect": descriptions[role]}
+
+
+def hero_battle_bonuses(heroes, selected, defending):
+    power, traits, details = 0, 0, []
+    for hero in heroes:
+        tier = 1 + TIERS.index(hero["tier"])
+        role = hero_role(hero)
+        match_count = sum(trait.startswith(HERO_TRAIT_DOMAIN[hero["specialty"]] + " ") for trait in selected)
+        added_power = tier * 2 if role == "guardian" and defending else tier * (len(heroes) - 1) if role == "rallier" else 0
+        added_traits = tier * match_count if role == "specialist" else 0
+        power += added_power
+        traits += added_traits
+        details.append({"name": hero["name"], "ability": hero["title"], "role": role,
+                        "power_bonus": added_power, "trait_bonus": added_traits})
+    return power, traits, details
 
 
 def check_registration_limit(db, request: Request, now: int) -> str | None:
@@ -734,7 +766,7 @@ def me(authorization: str | None = Header(None)):
         city = daily_tick(db, auth(db, authorization), int(time.time()))
         sync_residents(db, city)
         offers = [offer_view(row) for row in db.execute("SELECT * FROM chaos_offers WHERE city_id=? ORDER BY created_at,id", (city["id"],))]
-        heroes = [dict(row) for row in db.execute("SELECT * FROM heroes WHERE city_id=? ORDER BY slot IS NULL,slot,joined_at", (city["id"],))]
+        heroes = [dict(row) | {"ability": hero_ability(row)} for row in db.execute("SELECT * FROM heroes WHERE city_id=? ORDER BY slot IS NULL,slot,joined_at", (city["id"],))]
         buildings = [building_view(row) for row in db.execute("SELECT * FROM city_buildings WHERE city_id=? ORDER BY built_at", (city["id"],))]
         building_offers = [building_offer_view(row) for row in db.execute("SELECT * FROM prepared_buildings WHERE city_id=? ORDER BY blueprint_id", (city["id"],))]
         next_offers_at = min((row["created_at"] for row in db.execute("SELECT created_at FROM chaos_offers WHERE city_id=?", (city["id"],))), default=int(time.time())) + OFFER_SECONDS
@@ -1488,11 +1520,16 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         sampled = [{"name": DISPLAY_NAME[name], "attacker": actor_traits[name], "defender": target_traits[name]} for name in selected]
         target_defense = sum(BUILDING_BY_ID[row["blueprint_id"]]["defense"] for row in db.execute("SELECT blueprint_id FROM city_buildings WHERE city_id=?", (target["id"],)))
         # Only the sampled traits decide the match. A strong city has no global-level bonus.
-        trait_domain = {"food": "food", "wealth": "market", "morale": "civic", "tech": "science"}
         def hero_trait_bonus(heroes):
-            return sum((1 + TIERS.index(hero["tier"])) * 2 for hero in heroes for trait in selected if trait.startswith(trait_domain[hero["specialty"]].title() + " "))
+            return sum((1 + TIERS.index(hero["tier"])) * 2 for hero in heroes for trait in selected if trait.startswith(HERO_TRAIT_DOMAIN[hero["specialty"]] + " "))
         actor_trait_bonus = hero_trait_bonus(equipped_actor)
         target_trait_bonus = hero_trait_bonus(equipped_target)
+        actor_power_boost, actor_trait_boost, actor_abilities = hero_battle_bonuses(equipped_actor, selected, False)
+        target_power_boost, target_trait_boost, target_abilities = hero_battle_bonuses(equipped_target, selected, True)
+        attack_power += actor_power_boost
+        defense_power += target_power_boost
+        actor_trait_bonus += actor_trait_boost
+        target_trait_bonus += target_trait_boost
         difference = (sum(actor_traits[name] - target_traits[name] for name in selected) + actor_trait_bonus - target_trait_bonus) / 20
         chance = max(35, min(65, round(50 + difference / 4 + race_edge * 2 + (attack_power - defense_power) / 2 - (target_defense + city_bonuses(target)["defense"]) / 2)))
         success = secrets.randbelow(100) < chance
@@ -1520,7 +1557,7 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         changes = {"target_city": target["name"], "wallet_city": actor["name"], "attacker_city": actor["name"], "defender_city": target["name"], "stats": {}, "traits": {},
                    "attacker_traits": attacker_changes, "defender_traits": defender_changes,
                    "wallet": {"wealth": change(actor["wealth"], actor["wealth"] - BATTLE_COST)},
-                   "sampled_traits": sampled, "win_chance": chance, "race_duels": duels, "hero_power": {"attacker": attack_power, "defender": defense_power}, "hero_trait_bonus": {"attacker": actor_trait_bonus, "defender": target_trait_bonus}}
+                   "sampled_traits": sampled, "win_chance": chance, "race_duels": duels, "hero_power": {"attacker": attack_power, "defender": defense_power}, "hero_trait_bonus": {"attacker": actor_trait_bonus, "defender": target_trait_bonus}, "hero_abilities": {"attacker": actor_abilities, "defender": target_abilities}}
         if stolen_hero:
             changes["citizens"] = {stolen_hero["name"]: {"before": loser["name"], "after": winner["name"], "delta": 1}}
         reward = f"{moved} trait points" + (f" and {stolen_hero['name']} joined {winner['name']}" if stolen_hero else "")

@@ -1,6 +1,6 @@
 # Chaos Cities project board
 
-Updated 2026-09-24. This is the source of truth for what is playable and what remains. The browser view is at http://127.0.0.1:3010/board.
+Updated 2026-09-25. This is the source of truth for what is playable and what remains. The browser view is at http://127.0.0.1:3010/board.
 
 ## Done
 
@@ -48,6 +48,7 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] City listings and event feeds require a city key; the standalone feed is limited to the signed-in city's events.
 - [x] Public sign-ups are capped at five new cities per public IP per day, using hashed addresses; public mode requires a long invite code.
 - [x] Repeated temporary-city playtest covers forty PvP battles, citizen transfers, trait conservation, and eight Wealth trades.
+- [x] Equipped citizens have stable Guard, Rally, or Focus combat roles; battle records show each citizen's actual contribution.
 
 ## Verify and polish
 

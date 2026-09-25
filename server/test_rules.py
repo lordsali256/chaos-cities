@@ -12,6 +12,17 @@ with tempfile.TemporaryDirectory() as folder:
     from fastapi.testclient import TestClient
 
     client = TestClient(main.app)
+    def role_hero(role, tier):
+        hero_id = next(f"ability-{role}-{index}" for index in range(100) if main.hero_role({"id": f"ability-{role}-{index}"}) == role)
+        return {"id": hero_id, "name": role.title(), "title": f"{role.title()} of the Napkins",
+                "tier": tier, "specialty": "wealth"}
+
+    squad = [role_hero("guardian", "green"), role_hero("rallier", "blue"), role_hero("specialist", "purple")]
+    selected = ["Market Courage", "Market Style", "Food Unity"]
+    defense_power, defense_traits, defense_details = main.hero_battle_bonuses(squad, selected, True)
+    attack_power, attack_traits, _ = main.hero_battle_bonuses(squad, selected, False)
+    assert (defense_power, defense_traits, attack_power, attack_traits) == (10, 8, 6, 8)
+    assert [item["role"] for item in defense_details] == list(main.HERO_ROLES)
     first = client.post("/api/register", json={"player": "First Mayor", "city": "Ruleville"}).json()
     second = client.post("/api/register", json={"player": "Second Mayor", "city": "Rivalton"}).json()
     key = first["city_key"]
@@ -85,6 +96,7 @@ with tempfile.TemporaryDirectory() as folder:
         titles = [row[0] for row in db.execute("SELECT name FROM city_buildings WHERE city_id=? UNION ALL SELECT title FROM prepared_buildings WHERE city_id=?", (city_id, city_id))]
         assert len(titles) == len(set(name.casefold() for name in titles)) == len(main.BUILDING_BLUEPRINTS)
     assert client.post("/api/heroes/equip", json={"hero_id": "our-hero", "slot": 1}, headers=head).status_code == 200
+    assert next(hero for hero in client.get("/api/me", headers=head).json()["heroes"] if hero["id"] == "our-hero")["ability"]["name"] == "Ribbon Knight"
     assert client.post("/api/errands", json={"task_id": "anything"}, headers=head).status_code == 410
     with main.database() as db:
         for index in range(13):
@@ -101,6 +113,8 @@ with tempfile.TemporaryDirectory() as folder:
     assert outcome["success"] and len(outcome["sampled_traits"]) == 20
     assert len(outcome["changes"]["sampled_traits"]) == 20
     assert len(outcome["changes"]["race_duels"]) == 5
+    assert len(outcome["changes"]["hero_abilities"]["attacker"]) == 1
+    assert len(outcome["changes"]["hero_abilities"]["defender"]) == 1
     assert 35 <= outcome["chance"] <= 65
     defender_feed = client.get("/api/me", headers={"Authorization": f"Bearer {second['city_key']}"}).json()["feed"]
     assert any(item["kind"] == "battle" and len(item["changes"]["sampled_traits"]) == 20 for item in defender_feed)
