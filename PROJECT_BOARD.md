@@ -59,6 +59,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Rare alien words appear on about 3% of new chaos choices, city incidents, and people; each city learns a word when it acquires the item or event.
 - [x] Citizens automatically turn hourly goods and expiring services into meals, planks, tools, and research notes; players no longer craft by hand.
 - [x] Buildings and research consume stored goods alongside their existing currencies, and players can trade goods with friends.
+- [x] Concurrent goods trades cannot spend the same city inventory twice; research dots and building confirmation show their full goods costs.
 
 ## Verify and polish
 

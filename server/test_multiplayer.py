@@ -51,6 +51,19 @@ with tempfile.TemporaryDirectory() as folder:
         assert db.execute("SELECT wealth FROM cities WHERE id=?", (target_id,)).fetchone()[0] == 5
         assert db.execute("SELECT COUNT(*) FROM trade_offers WHERE status='accepted'").fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM event_log WHERE kind='trade'").fetchone()[0] == 1
+        db.execute("UPDATE cities SET goods=? WHERE id=?", (main.json.dumps({"ore": 4}), target_id))
+        for index, city in enumerate(cities[:2]):
+            db.execute("INSERT INTO trade_offers (id,sender_id,target_id,offer_hero_id,request_hero_id,offer_wealth,request_wealth,status,created_at,expires_at,resolved_at,request_good,request_good_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (f"goods-{index}", city["city"]["id"], target_id, None, None, 0, 0,
+                        "pending", now - 86401, now + 3600, 0, "ore", 3))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(client.post, f"/api/trades/goods-{index}/accept", headers=heads[2]) for index in range(2)]
+        goods_results = [future.result() for future in futures]
+    assert sorted(result.status_code for result in goods_results) == [200, 409], [result.text for result in goods_results]
+    with main.database() as db:
+        stocks = [main.json.loads(db.execute("SELECT goods FROM cities WHERE id=?", (city["city"]["id"],)).fetchone()[0]).get("ore", 0) for city in cities]
+        assert sorted(stocks) == [0, 1, 3] and sum(stocks) == 4, stocks
+        assert db.execute("SELECT COUNT(*) FROM trade_offers WHERE status='accepted' AND id LIKE 'goods-%'").fetchone()[0] == 1
         for index in range(main.INCOMING_ATTACK_LIMIT - 1):
             db.execute("INSERT INTO event_log (id,actor_id,target_id,event_id,success,story,deltas,created_at,kind,changes,title) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (f"cap-{index}", first["city"]["id"], target_id, "flyer_mixup", 1, "test", "{}", now, "cast", "{}", "test"))
@@ -148,4 +161,4 @@ with tempfile.TemporaryDirectory() as folder:
         assert db.execute("SELECT COUNT(*) FROM registration_log").fetchone()[0] == 3
         assert all(len(row[0]) == 64 for row in db.execute("SELECT DISTINCT client_hash FROM registration_log"))
 
-    print("Concurrent PvP, trade spending, access control, underdog fairness, spoiler and sign-up limits: PASS")
+    print("Concurrent PvP, Wealth and goods trades, access control, underdog fairness, spoiler and sign-up limits: PASS")

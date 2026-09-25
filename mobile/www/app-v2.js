@@ -319,7 +319,7 @@ function researchPercent() {
   if (!state.research) return 0;
   return Math.max(0, Math.min(100, 100 * (Date.now()/1000 - state.research.started_at) / (state.research.ready_at - state.research.started_at)));
 }
-function goodsCost(cost) { return Object.entries(cost || {}).map(([name, amount]) => `${amount} ${name}`).join(' · '); }
+function goodsCost(cost) { return Object.entries(cost || {}).map(([name, amount]) => `${amount} ${amount === 1 ? ({notes:'note', meals:'meal', planks:'plank', tools:'tool'}[name] || name) : name}`).join(' · '); }
 function hasGoods(cost) { return Object.entries(cost || {}).every(([name, amount]) => (state.economy?.goods?.[name] || 0) >= amount); }
 function techTreeView() {
   const known = new Set(state.me.tech_nodes);
@@ -468,12 +468,12 @@ function render() {
     <details class="surface residents-list"><summary>Meet all ${state.residents.length} residents</summary><p>Each resident has a race and a preferred enemy. In battle, a matching opponent takes double damage. An equipped hero gains an ally bonus when their ally race joins the fight.</p><div class="resident-grid">${state.residents.map(person => `<div><b>${esc(person.name)}</b><small>${esc(person.race)} · beats ${esc(person.preferred_enemy)}</small></div>`).join('')}</div></details>
     ` : ''}
     ${state.page === 'build' ? `
-    <div class="section-head"><div><h2>Buildings</h2><p>Buildings provide permanent buffs to your city. Spend Wealth to build each unique design once.</p></div><span class="chip">${state.buildings.length} / ${city.building_slots} BUILT</span></div>
+    <div class="section-head"><div><h2>Buildings</h2><p>Buildings provide permanent buffs to your city. Spend Wealth and stored goods to build each unique design once.</p></div><span class="chip">${state.buildings.length} / ${city.building_slots} BUILT</span></div>
     <div class="cards building-list">${buildingCards()}</div>
     <p class="progress-note">Every city starts with one plot. Buy more through the Research shop.</p>
     ` : ''}
     ${state.page === 'research' ? `
-    <div class="section-head"><div><h2>Research</h2><p>Choose a branch and press Start research on an available discovery. Tech opens it; Cash and research notes pay for it.</p></div><span class="chip">🛸 ${city.tech} Tech · 💵 ${city.cash.toFixed(2)} Cash · 📝 ${state.economy?.goods?.notes || 0} notes</span></div>
+    <div class="section-head"><div><h2>Research</h2><p>Choose a branch and press Start research on an available discovery. Tech opens it; Cash and research notes pay for it.</p></div><span class="chip">🛸 ${city.tech} Tech · 💵 ${city.cash.toFixed(2)} Cash · 📝 ${goodsCost({notes:state.economy?.goods?.notes || 0})}</span></div>
     ${techTreeView()}
     <div class="section-head"><div><h2>Upgrade shop</h2><p>Cash comes from Wealth every hour. Upgrades increase passive growth or buy more slots.</p></div></div>
     <div class="cards">${shopCards()}</div>
@@ -570,10 +570,10 @@ window.showTechNode = id => {
   const needs = node.requires.map(item => names[item] || item);
   const prerequisites = node.requires.every(item => owned.has(item));
   const researching = state.research?.node_id === id;
-  const available = !state.research && !owned.has(id) && prerequisites && state.me.tech >= node.tech && state.me.cash >= node.cost;
+  const available = !state.research && !owned.has(id) && prerequisites && state.me.tech >= node.tech && state.me.cash >= node.cost && hasGoods(node.goods_cost);
   const panel = byId('tech-inspector');
   if (!panel) return;
-  panel.innerHTML = `<span class="eyebrow">${esc(node.branch.toUpperCase())} RESEARCH</span><h3>${esc(node.name)}</h3><p>${esc(node.effect)}</p><small>Requires ${needs.length ? esc(needs.join(', ')) : 'no earlier research'} · Tech ${node.tech} · 💵 ${node.cost} Cash</small><p>${researching ? `Researching · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span> left` : owned.has(id) ? 'Already researched' : state.research ? 'Finish your current research first.' : available ? 'Ready to research' : !prerequisites ? 'Research the connected dots first.' : state.me.tech < node.tech ? `Needs ${node.tech} Tech; you have ${state.me.tech}.` : `Needs ${node.cost} Cash; you have ${state.me.cash.toFixed(2)}.`}</p>${researching ? `<div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div>` : ''}<button class="primary" ${available ? '' : 'disabled'} onclick="researchNode('${id}')">Start research</button>`;
+  panel.innerHTML = `<span class="eyebrow">${esc(node.branch.toUpperCase())} RESEARCH</span><h3>${esc(node.name)}</h3><p>${esc(node.effect)}</p><small>Requires ${needs.length ? esc(needs.join(', ')) : 'no earlier research'} · Tech ${node.tech} · 💵 ${node.cost} Cash${goodsCost(node.goods_cost) ? ` · 📦 ${goodsCost(node.goods_cost)}` : ''}</small><p>${researching ? `Researching · <span data-countdown="${state.research.ready_at}">${clock(state.research.ready_at)}</span> left` : owned.has(id) ? 'Already researched' : state.research ? 'Finish your current research first.' : available ? 'Ready to research' : !prerequisites ? 'Research the connected dots first.' : state.me.tech < node.tech ? `Needs ${node.tech} Tech; you have ${state.me.tech}.` : state.me.cash < node.cost ? `Needs ${node.cost} Cash; you have ${state.me.cash.toFixed(2)}.` : `Needs ${goodsCost(node.goods_cost)}.`}</p>${researching ? `<div class="progress"><i data-research-progress style="width:${researchPercent()}%"></i></div>` : ''}<button class="primary" ${available ? '' : 'disabled'} onclick="researchNode('${id}')">Start research</button>`;
 };
 
 window.buyUpgrade = id => {
@@ -633,7 +633,7 @@ window.buildCity = id => {
   if (!plan || state.busy) return;
   const overlay = document.createElement('div');
   overlay.className = 'modal-backdrop';
-  overlay.innerHTML = `<div class="modal"><h2>${plan.icon} ${esc(plan.name)}</h2><p>${esc(plan.description)}</p><p class="effect-preview">${esc(buildingPerk(plan))}</p><p class="cost">Construction cost: 💰 ${plan.cost} Wealth</p><div class="actions"><button class="secondary" id="cancel-build">Cancel</button><button class="primary" id="confirm-build">Build it</button></div></div>`;
+  overlay.innerHTML = `<div class="modal"><h2>${plan.icon} ${esc(plan.name)}</h2><p>${esc(plan.description)}</p><p class="effect-preview">${esc(buildingPerk(plan))}</p><p class="cost">Construction cost: 💰 ${plan.cost} Wealth · 📦 ${goodsCost(plan.goods_cost)}</p><div class="actions"><button class="secondary" id="cancel-build">Cancel</button><button class="primary" id="confirm-build">Build it</button></div></div>`;
   document.body.appendChild(overlay);
   byId('cancel-build').onclick = () => overlay.remove();
   byId('confirm-build').onclick = async () => {
