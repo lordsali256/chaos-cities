@@ -66,6 +66,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] City event history and PvP pair-limit lookups have indexes for both the acting and receiving city as the log grows.
 - [x] The local battle writer receives the sampled traits where each city is stronger, with their owners clearly marked, to keep story details tied to the actual personalities.
 - [x] Trade proposals load the chosen rival city's Heroes on demand, so older cities remain tradeable after the world passes 100 Heroes.
+- [x] Open trade offers stay visible even after a city accumulates more than 30 completed or declined offers.
 
 ## Verify and polish
 

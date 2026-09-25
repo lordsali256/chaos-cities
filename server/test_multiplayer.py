@@ -184,4 +184,14 @@ with tempfile.TemporaryDirectory() as folder:
     assert client.get(f"/api/cities/{target_id}/heroes").status_code == 401
     assert client.get("/api/cities/no-such-city/heroes", headers=heads[0]).status_code == 404
 
-    print("Concurrent PvP, trades, access control, underdog fairness, sign-up limits, and full rival rosters: PASS")
+    with main.database() as db:
+        for index in range(32):
+            db.execute("INSERT INTO trade_offers (id,sender_id,target_id,offer_wealth,request_wealth,status,created_at,expires_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (f"history-{index}", first["city"]["id"], target_id, 1, 0,
+                        "accepted" if index else "pending", now - 3600 if index == 0 else now + index,
+                        now + 3600, 0))
+    visible_offers = client.get("/api/trades", headers=heads[0]).json()["offers"]
+    assert visible_offers[0]["id"] == "history-0" and visible_offers[0]["status"] == "pending"
+    assert len([offer for offer in visible_offers if offer["status"] != "pending"]) <= 30
+
+    print("Concurrent PvP, trades, access control, underdog fairness, sign-up limits, full rosters, and pending offer visibility: PASS")

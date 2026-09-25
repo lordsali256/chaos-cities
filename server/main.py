@@ -1256,11 +1256,16 @@ def list_trades(authorization: str | None = Header(None)):
         city = auth(db, authorization)
         now = int(time.time())
         db.execute("UPDATE trade_offers SET status='expired',resolved_at=? WHERE status='pending' AND expires_at<=?", (now, now))
-        rows = db.execute("""SELECT o.*,s.name sender_name,t.name target_name,
-                           h1.name offer_hero_name,h2.name request_hero_name FROM trade_offers o
-                           JOIN cities s ON s.id=o.sender_id JOIN cities t ON t.id=o.target_id
-                           LEFT JOIN heroes h1 ON h1.id=o.offer_hero_id LEFT JOIN heroes h2 ON h2.id=o.request_hero_id
-                           WHERE o.sender_id=? OR o.target_id=? ORDER BY o.created_at DESC LIMIT 30""", (city["id"], city["id"])).fetchall()
+        details = """SELECT o.*,s.name sender_name,t.name target_name,
+                     h1.name offer_hero_name,h2.name request_hero_name FROM trade_offers o
+                     JOIN cities s ON s.id=o.sender_id JOIN cities t ON t.id=o.target_id
+                     LEFT JOIN heroes h1 ON h1.id=o.offer_hero_id LEFT JOIN heroes h2 ON h2.id=o.request_hero_id
+                     WHERE (o.sender_id=? OR o.target_id=?)"""
+        pending = db.execute(details + " AND o.status='pending' ORDER BY o.created_at DESC",
+                             (city["id"], city["id"])).fetchall()
+        history = db.execute(details + " AND o.status<>'pending' ORDER BY o.created_at DESC LIMIT 30",
+                             (city["id"], city["id"])).fetchall()
+        rows = pending + history
         sent_today = db.execute("SELECT COUNT(*) FROM trade_offers WHERE sender_id=? AND created_at>=?", (city["id"], now-86400)).fetchone()[0]
         pair_sent = {row["target_id"]: row["count"] for row in db.execute("SELECT target_id,COUNT(*) count FROM trade_offers WHERE sender_id=? AND created_at>=? GROUP BY target_id", (city["id"], now-86400))}
         return {"offers": [trade_view(row) for row in rows], "sent_today": sent_today, "daily_limit": TRADE_DAILY_LIMIT, "pair_sent_today": pair_sent, "pair_daily_limit": TRADE_PAIR_DAILY_LIMIT}
