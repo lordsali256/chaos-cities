@@ -135,4 +135,17 @@ with tempfile.TemporaryDirectory() as folder:
         main.httpx.post = original_post
     assert story[2] == ["The pretzel commission is counting every twist."], story
 
-    print("Concurrent PvP, trade spending, access control, underdog fairness, and spoiler filtering: PASS")
+    main.PUBLIC_REGISTRATION_LIMIT = 2
+    main.TRUST_PROXY_CLIENT_IP = True
+    shared_address = {"X-Game-Client-IP": "198.51.100.10"}
+    for index in range(2):
+        response = client.post("/api/register", json={"player": "Shared Mayor", "city": f"Sharedville {index}"}, headers=shared_address)
+        assert response.status_code == 200, response.text
+    assert client.post("/api/register", json={"player": "Shared Mayor", "city": "Sharedville 3"}, headers=shared_address).status_code == 429
+    another_address = {"X-Game-Client-IP": "198.51.100.11"}
+    assert client.post("/api/register", json={"player": "Other Mayor", "city": "Elsewhere"}, headers=another_address).status_code == 200
+    with main.database() as db:
+        assert db.execute("SELECT COUNT(*) FROM registration_log").fetchone()[0] == 3
+        assert all(len(row[0]) == 64 for row in db.execute("SELECT DISTINCT client_hash FROM registration_log"))
+
+    print("Concurrent PvP, trade spending, access control, underdog fairness, spoiler and sign-up limits: PASS")

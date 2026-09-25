@@ -46,6 +46,7 @@ Updated 2026-09-24. This is the source of truth for what is playable and what re
 - [x] Public deployment requires a private invite code and HTTPS game domain; its proxy sends basic security headers.
 - [x] SQLite online backup command checks integrity without stopping the game; a private host copy can be kept outside Git.
 - [x] City listings and event feeds require a city key; the standalone feed is limited to the signed-in city's events.
+- [x] Public sign-ups are capped at five new cities per public IP per day, using hashed addresses; public mode requires a long invite code.
 
 ## Verify and polish
 

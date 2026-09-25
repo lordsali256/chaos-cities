@@ -5,6 +5,8 @@ services:
     environment:
       INVITE_CODE: ${INVITE_CODE:?Set a private INVITE_CODE in .env before public hosting}
       PHONE_SERVER_URL: https://${GAME_DOMAIN:?Set GAME_DOMAIN in .env}
+      PUBLIC_REGISTRATION_LIMIT: 5
+      TRUST_PROXY_CLIENT_IP: 1
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped

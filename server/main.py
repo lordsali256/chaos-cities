@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import json
 import os
 import random
@@ -14,7 +15,7 @@ from pathlib import Path
 import httpx
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +30,10 @@ DAY_SECONDS = max(60, int(os.getenv("DAY_SECONDS", "86400")))
 DAILY_TOKENS = max(1, int(os.getenv("DAILY_TOKENS", "1")))
 TOKEN_SECONDS = max(60, int(os.getenv("TOKEN_SECONDS", "3600")))
 INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
+PUBLIC_REGISTRATION_LIMIT = max(0, int(os.getenv("PUBLIC_REGISTRATION_LIMIT", "0")))
+TRUST_PROXY_CLIENT_IP = os.getenv("TRUST_PROXY_CLIENT_IP", "0") == "1"
+if PUBLIC_REGISTRATION_LIMIT and len(INVITE_CODE) < 20:
+    raise RuntimeError("Public hosting needs an INVITE_CODE of at least 20 characters")
 PHONE_SERVER_URL = os.getenv("PHONE_SERVER_URL", "").strip().rstrip("/")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://free-llm-ollama:11434")
@@ -196,6 +201,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS google_sessions (
           session_hash TEXT PRIMARY KEY, city_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS google_sessions_city ON google_sessions(city_id);
+        CREATE TABLE IF NOT EXISTS registration_log (
+          id TEXT PRIMARY KEY, client_hash TEXT NOT NULL, city_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS registration_client_time ON registration_log(client_hash, created_at DESC);
         CREATE TABLE IF NOT EXISTS residents (
           city_id TEXT NOT NULL, ordinal INTEGER NOT NULL, name TEXT NOT NULL,
           race TEXT NOT NULL, ai_named INTEGER NOT NULL DEFAULT 0,
@@ -375,6 +384,28 @@ def auth(db, authorization: str | None):
     if not city:
         raise HTTPException(401, "Unknown city key")
     return city
+
+
+def registration_identity(request: Request) -> str:
+    address = request.client.host if request.client else "unknown"
+    if TRUST_PROXY_CLIENT_IP:
+        supplied = request.headers.get("x-game-client-ip", "")
+        try:
+            address = str(ipaddress.ip_address(supplied))
+        except ValueError:
+            pass
+    return hashlib.sha256(f"{INVITE_CODE}|{address}".encode()).hexdigest()
+
+
+def check_registration_limit(db, request: Request, now: int) -> str | None:
+    if not PUBLIC_REGISTRATION_LIMIT:
+        return None
+    client_hash = registration_identity(request)
+    db.execute("DELETE FROM registration_log WHERE created_at<?", (now - 86400,))
+    count = db.execute("SELECT COUNT(*) FROM registration_log WHERE client_hash=? AND created_at>=?", (client_hash, now - 86400)).fetchone()[0]
+    if count >= PUBLIC_REGISTRATION_LIMIT:
+        raise HTTPException(429, "This connection has reached its daily new-city limit")
+    return client_hash
 
 
 def sync_residents(db, city):
@@ -626,7 +657,7 @@ def auth_config():
 
 
 @app.post("/api/auth/google")
-def google_sign_in(data: GoogleCredential):
+def google_sign_in(data: GoogleCredential, request: Request):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(503, "Google sign-in is not configured yet")
     try:
@@ -646,6 +677,7 @@ def google_sign_in(data: GoogleCredential):
         else:
             if INVITE_CODE and not secrets.compare_digest(data.invite_code, INVITE_CODE):
                 raise HTTPException(403, "Invite code required")
+            client_hash = check_registration_limit(db, request, now)
             given = re.sub(r"[^A-Za-z0-9]", "", identity.get("given_name", "Mayor"))[:16] or "Mayor"
             player = clean_name(given if len(given) >= 2 else "Mayor", 2, 24)
             city_id = str(uuid.uuid4())
@@ -661,6 +693,8 @@ def google_sign_in(data: GoogleCredential):
             traits = {trait: rng.randint(20, 80) for trait in TRAIT_NAMES}
             db.execute("INSERT INTO cities (id,owner_hash,owner_name,name,tokens,last_day,population,wealth,food,morale,tech,weirdness,traits,created_at,last_token,last_income) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (city_id, hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(), player, name, 12, now, 100, 60, 60, 60, 20, 2, json.dumps(traits), now, now, now))
             db.execute("INSERT INTO google_accounts VALUES (?,?)", (subject, city_id))
+            if client_hash:
+                db.execute("INSERT INTO registration_log VALUES (?,?,?,?)", (str(uuid.uuid4()), client_hash, city_id, now))
             city = db.execute("SELECT * FROM cities WHERE id=?", (city_id,)).fetchone()
         db.execute("INSERT INTO google_sessions VALUES (?,?,?)", (session_hash, city["id"], now + 30*86400))
         db.execute("DELETE FROM google_sessions WHERE expires_at<?", (now,))
@@ -673,7 +707,7 @@ def catalog():
 
 
 @app.post("/api/register")
-def register(data: Register):
+def register(data: Register, request: Request):
     if INVITE_CODE and not secrets.compare_digest(data.invite_code, INVITE_CODE):
         raise HTTPException(403, "Invite code required")
     player = clean_name(data.player, 2, 24)
@@ -686,7 +720,10 @@ def register(data: Register):
     with LOCK, database() as db:
         if db.execute("SELECT 1 FROM cities WHERE name=? COLLATE NOCASE", (name,)).fetchone():
             raise HTTPException(409, "That city name is taken")
+        client_hash = check_registration_limit(db, request, now)
         db.execute("INSERT INTO cities (id,owner_hash,owner_name,name,tokens,last_day,population,wealth,food,morale,tech,weirdness,traits,created_at,last_token,last_income) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (city_id, hashlib.sha256(token.encode()).hexdigest(), player, name, 12, now, 100, 60, 60, 60, 20, 2, json.dumps(traits), now, now, now))
+        if client_hash:
+            db.execute("INSERT INTO registration_log VALUES (?,?,?,?)", (str(uuid.uuid4()), client_hash, city_id, now))
         row = db.execute("SELECT * FROM cities WHERE id=?", (city_id,)).fetchone()
     return {"city_key": token, "city": city_view(row, True)}
 
