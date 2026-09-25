@@ -1540,6 +1540,7 @@ def battle(data: BattleRequest, authorization: str | None = Header(None)):
         if eligible_heroes and secrets.randbelow(100) < 30:
             stolen_hero = secrets.choice(eligible_heroes)
             db.execute("UPDATE heroes SET city_id=?,slot=NULL WHERE id=?", (winner["id"], stolen_hero["id"]))
+            db.execute("UPDATE trade_offers SET status='expired',resolved_at=? WHERE status='pending' AND (offer_hero_id=? OR request_hero_id=?)", (now, stolen_hero["id"], stolen_hero["id"]))
         trait_names = secrets.SystemRandom().sample(selected, 3)
         attacker_changes, defender_changes = {}, {}
         moved = 0

@@ -105,6 +105,8 @@ with tempfile.TemporaryDirectory() as folder:
 
     main.battle_story = lambda actor, target, sampled, winner, reward: ("The Grand Cabbage Contest", f"I am {target}. {winner} won a grand contest over {reward}.")
     main.secrets.randbelow = lambda n: 0
+    pending_hero_trade = client.post("/api/trades", json={"target_city_id": rival_id, "request_hero_id": "rival-hero", "offer_wealth": 1}, headers=head)
+    assert pending_hero_trade.status_code == 200, pending_hero_trade.text
     with main.database() as db:
         db.execute("UPDATE cities SET created_at=? WHERE id=?", (now-3601, rival_id))
     win = client.post("/api/battles", json={"target_city_id": rival_id}, headers=head)
@@ -120,6 +122,10 @@ with tempfile.TemporaryDirectory() as folder:
     assert any(item["kind"] == "battle" and len(item["changes"]["sampled_traits"]) == 20 for item in defender_feed)
     assert len(outcome["changes"]["attacker_traits"]) == 3
     assert outcome["stolen_hero"] == "Professor Pickle"
+    with main.database() as db:
+        assert db.execute("SELECT status FROM trade_offers WHERE id=?", (pending_hero_trade.json()["id"],)).fetchone()["status"] == "expired"
+        db.execute("UPDATE trade_offers SET created_at=? WHERE id=?", (now-61, pending_hero_trade.json()["id"]))
+    assert next(offer for offer in client.get("/api/trades", headers=head).json()["offers"] if offer["id"] == pending_hero_trade.json()["id"])["status"] == "expired"
     assert all(value["delta"] >= 0 for value in outcome["changes"]["attacker_traits"].values())
     assert client.post("/api/battles", json={"target_city_id": rival_id}, headers=head).status_code == 409
     third = client.post("/api/register", json={"player": "Third Mayor", "city": "Thirdville"}).json()

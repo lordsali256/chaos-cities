@@ -49,6 +49,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Public sign-ups are capped at five new cities per public IP per day, using hashed addresses; public mode requires a long invite code.
 - [x] Repeated temporary-city playtest covers forty PvP battles, citizen transfers, trait conservation, and eight Wealth trades.
 - [x] Equipped citizens have stable Guard, Rally, or Focus combat roles; battle records show each citizen's actual contribution.
+- [x] A battle that transfers a special citizen immediately closes pending trade offers involving that citizen.
 
 ## Verify and polish
 
