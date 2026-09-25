@@ -64,6 +64,7 @@ Updated 2026-09-25. This is the source of truth for what is playable and what re
 - [x] Buildings and research consume stored goods alongside their existing currencies, and players can trade goods with friends.
 - [x] Concurrent goods trades cannot spend the same city inventory twice; research dots and building confirmation show their full goods costs.
 - [x] City event history and PvP pair-limit lookups have indexes for both the acting and receiving city as the log grows.
+- [x] The local battle writer receives the sampled traits where each city is stronger, with their owners clearly marked, to keep story details tied to the actual personalities.
 
 ## Verify and polish
 

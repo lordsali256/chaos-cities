@@ -1916,8 +1916,12 @@ def trade_story(sender, target, items, fallback):
 def battle_story(actor, target, sampled, winner, reward):
     title = f"The {sampled[0]['name']} and {sampled[1]['name']} Incident"
     fallback = f"I am {target}. {actor} arrived with twenty arguments about my personality. {winner} won a ridiculous civic contest and claimed {reward}."
+    signatures = {
+        "attacker_stronger_in": [item for item in sorted(sampled, key=lambda item: item["attacker"] - item["defender"], reverse=True) if item["attacker"] > item["defender"]][:3],
+        "defender_stronger_in": [item for item in sorted(sampled, key=lambda item: item["defender"] - item["attacker"], reverse=True) if item["defender"] > item["attacker"]][:3],
+    }
     try:
-        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 390, "temperature": 1.05}, "messages": [{"role": "system", "content": "Invent a unique, funny, G-rated scene for a city-versus-city contest, using the listed traits from both cities. The battle result is handled separately. Do not mention who wins, loses, or receives anything. Answer JSON with title, scene (one or two short sentences), and beats (six short live-commentary sentences). The beats must not reveal the result. No markdown."}, {"role": "user", "content": json.dumps({"attacker": actor, "defender": target, "twenty_traits": sampled, "nonce": secrets.token_hex(4)})}]}, timeout=18)
+        response = httpx.post(f"{OLLAMA_URL}/api/chat", json={"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "options": {"num_predict": 390, "temperature": 1.05}, "messages": [{"role": "system", "content": "Invent a unique, funny, G-rated scene for a city-versus-city contest. Use the personality_signatures as the main inspiration: attacker_stronger_in belongs to the attacker, defender_stronger_in belongs to the defender. Higher scores mean a trait is more prominent. Do not swap which city has a trait or claim a city is strong in a low-scoring trait. The battle result is handled separately. Do not mention who wins, loses, or receives anything. Answer JSON with title, scene (one or two short sentences), and beats (six short live-commentary sentences). The beats must not reveal the result. No markdown."}, {"role": "user", "content": json.dumps({"attacker": actor, "defender": target, "personality_signatures": signatures, "twenty_traits": sampled, "nonce": secrets.token_hex(4)})}]}, timeout=18)
         response.raise_for_status()
         content = json.loads(response.json()["message"]["content"])
         proposed_title = str(content.get("title", "")).strip()[:90]
