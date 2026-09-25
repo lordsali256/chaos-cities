@@ -264,6 +264,7 @@ def init_db():
           event_id TEXT NOT NULL, success INTEGER NOT NULL, story TEXT NOT NULL,
           deltas TEXT NOT NULL, created_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS event_target_time ON event_log(target_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS event_actor_time ON event_log(actor_id, created_at DESC);
         CREATE TABLE IF NOT EXISTS chaos_offers (
           id TEXT PRIMARY KEY, city_id TEXT NOT NULL, template_id TEXT NOT NULL,
           title TEXT NOT NULL, tagline TEXT NOT NULL, created_at INTEGER NOT NULL,
